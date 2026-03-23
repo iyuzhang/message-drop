@@ -1,7 +1,8 @@
 node_modules/
 dist/
-data/messages.json
+data/
 *.log
 android/.gradle/
 android/build/
 android/app/build/
+android/local.properties

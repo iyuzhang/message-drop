@@ -5,10 +5,12 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -17,6 +19,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +45,29 @@ class MainActivity : AppCompatActivity() {
   private var connectivityManager: ConnectivityManager? = null
   private var networkCallback: ConnectivityManager.NetworkCallback? = null
   private var multicastLock: WifiManager.MulticastLock? = null
+  private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+  private val fileChooserLauncher =
+    registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+      val callback = fileChooserCallback
+      fileChooserCallback = null
+      if (callback == null) return@registerForActivityResult
+      if (result.resultCode != RESULT_OK) {
+        callback.onReceiveValue(null)
+        return@registerForActivityResult
+      }
+      val data = result.data
+      val uris =
+        when {
+          data == null -> emptyArray()
+          data.clipData != null -> {
+            val clip = data.clipData!!
+            Array(clip.itemCount) { i -> clip.getItemAt(i).uri }
+          }
+          data.data != null -> arrayOf(data.data!!)
+          else -> emptyArray()
+        }
+      callback.onReceiveValue(uris)
+    }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -81,7 +107,26 @@ class MainActivity : AppCompatActivity() {
     webView.settings.domStorageEnabled = true
     webView.settings.allowFileAccess = false
     webView.settings.allowContentAccess = false
-    webView.webChromeClient = WebChromeClient()
+    webView.webChromeClient = object : WebChromeClient() {
+      override fun onShowFileChooser(
+        webView: WebView?,
+        filePathCallback: ValueCallback<Array<Uri>>,
+        fileChooserParams: FileChooserParams,
+      ): Boolean {
+        fileChooserCallback?.onReceiveValue(null)
+        fileChooserCallback = filePathCallback
+        return try {
+          val intent = fileChooserParams.createIntent()
+          fileChooserLauncher.launch(intent)
+          Log.i(logTag, "file chooser opened")
+          true
+        } catch (e: Exception) {
+          Log.w(logTag, "file chooser open failed: ${e.message}")
+          fileChooserCallback = null
+          false
+        }
+      }
+    }
     webView.webViewClient = object : WebViewClient() {
       override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)

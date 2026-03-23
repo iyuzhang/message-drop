@@ -1,7 +1,7 @@
 .app {
   display: flex;
   flex-direction: column;
-  min-height: 100svh;
+  min-height: var(--app-vh, 100dvh);
   max-width: 720px;
   margin: 0 auto;
   padding: 0 12px calc(16px + env(safe-area-inset-bottom, 0px));
@@ -48,6 +48,7 @@
 
 .main {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 12px 0;
 }
@@ -98,6 +99,8 @@
 }
 
 .composer {
+  position: sticky;
+  bottom: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -105,6 +108,8 @@
   padding-top: 12px;
   padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border);
+  background: var(--bg);
+  z-index: 1;
 }
 
 .field {
@@ -170,6 +175,10 @@
   max-width: 200px;
 }
 
+.hidden-input {
+  display: none;
+}
+
 .attach-name {
   font-size: 13px;
   color: var(--text);
@@ -177,6 +186,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.attach-preview {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
 }
 
 .sr-only {
