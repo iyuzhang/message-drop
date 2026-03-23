@@ -1,0 +1,7 @@
+node_modules/
+dist/
+data/messages.json
+*.log
+android/.gradle/
+android/build/
+android/app/build/
