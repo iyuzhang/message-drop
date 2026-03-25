@@ -1,5 +1,8 @@
 import type { PoolMessage } from './types'
 
+export type { AppUpdateInfo } from './types'
+export { checkForAppUpdate } from './release'
+
 export function getApiBase(): string {
   const v = import.meta.env.VITE_API_BASE
   if (typeof v === 'string' && v.length > 0) return v.replace(/\/$/, '')

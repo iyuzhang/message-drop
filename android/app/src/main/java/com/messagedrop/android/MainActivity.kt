@@ -9,17 +9,22 @@ import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.util.Log
+import android.webkit.JavascriptInterface
 import android.view.View
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.LinearLayout
 import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +40,7 @@ import kotlin.coroutines.resume
 
 class MainActivity : AppCompatActivity() {
   private val logTag = "MessageDrop"
+  private lateinit var rootContainer: LinearLayout
   private lateinit var webView: WebView
   private lateinit var statusText: TextView
   private lateinit var statusSpinner: ProgressBar
@@ -71,12 +77,15 @@ class MainActivity : AppCompatActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    WindowCompat.setDecorFitsSystemWindows(window, false)
     setContentView(R.layout.activity_main)
 
+    rootContainer = findViewById(R.id.rootContainer)
     webView = findViewById(R.id.webView)
     statusText = findViewById(R.id.statusText)
     statusSpinner = findViewById(R.id.statusSpinner)
 
+    configureWindowInsets()
     configureWebView()
     acquireMulticastLock()
 
@@ -102,11 +111,28 @@ class MainActivity : AppCompatActivity() {
     multicastLock = null
   }
 
+  private fun configureWindowInsets() {
+    ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { view, windowInsets ->
+      val systemBars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+      view.setPadding(
+        systemBars.left,
+        systemBars.top,
+        systemBars.right,
+        systemBars.bottom,
+      )
+      windowInsets
+    }
+  }
+
   private fun configureWebView() {
     webView.settings.javaScriptEnabled = true
     webView.settings.domStorageEnabled = true
     webView.settings.allowFileAccess = false
     webView.settings.allowContentAccess = false
+    webView.addJavascriptInterface(
+      AppVersionBridge(BuildConfig.VERSION_NAME),
+      "MessageDropAndroid",
+    )
     webView.webChromeClient = object : WebChromeClient() {
       override fun onShowFileChooser(
         webView: WebView?,
@@ -359,4 +385,11 @@ class MainActivity : AppCompatActivity() {
       """.trimIndent()
     webView.loadDataWithBaseURL("about:blank", html, "text/html", "utf-8", null)
   }
+}
+
+private class AppVersionBridge(
+  private val versionName: String,
+) {
+  @JavascriptInterface
+  fun getAppVersion(): String = versionName
 }

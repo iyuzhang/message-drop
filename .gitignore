@@ -2,6 +2,12 @@ node_modules/
 dist/
 data/
 *.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+coverage/
 android/.gradle/
 android/build/
 android/app/build/

@@ -1,9 +1,9 @@
 {
-  "name": "message-drop",
+  "name": "message-drop-workspace",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "",
+  "description": "LAN message and file sharing: Node server, web UI, Android app, and CLI.",
   "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -13,11 +13,16 @@
     "verify:phase3": "tsx scripts/verify-phase3.ts && pnpm --dir web run build",
     "verify:phase4": "tsx scripts/verify-phase4.ts && pnpm --dir web run build",
     "verify:phase5": "tsx scripts/verify-phase5.ts",
-    "verify:all": "pnpm run verify:phase1 && pnpm run verify:phase2 && pnpm run verify:phase3 && pnpm run verify:phase4 && pnpm run verify:phase5 && pnpm run verify:phase6",
     "dev:server": "tsx watch src/server.ts",
     "dev:web": "pnpm --dir web dev",
     "typecheck": "tsc --noEmit",
-    "verify:phase6": "bash scripts/verify-phase6.sh"
+    "verify:phase6": "bash scripts/verify-phase6.sh",
+    "verify:phase7-cli": "tsx scripts/verify-phase7-cli.ts",
+    "verify:phase8-release-check": "tsx scripts/verify-phase8-release-check.ts",
+    "verify:phase9-open-source": "tsx scripts/verify-phase9-open-source.ts",
+    "verify:phase10-release-workflow": "tsx scripts/verify-phase10-release-workflow.ts",
+    "verify:adb-smoke": "bash scripts/verify-adb-smoke.sh",
+    "verify:all": "pnpm run verify:phase1 && pnpm run verify:phase2 && pnpm run verify:phase3 && pnpm run verify:phase4 && pnpm run verify:phase5 && pnpm run verify:phase6 && pnpm run verify:phase7-cli && pnpm run verify:phase8-release-check && pnpm run verify:phase9-open-source && pnpm run verify:phase10-release-workflow"
   },
   "keywords": [],
   "author": "",

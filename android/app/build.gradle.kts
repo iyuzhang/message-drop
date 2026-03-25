@@ -7,6 +7,10 @@ android {
   namespace = "com.messagedrop.android"
   compileSdk = 35
 
+  buildFeatures {
+    buildConfig = true
+  }
+
   defaultConfig {
     applicationId = "com.messagedrop.android"
     minSdk = 26

@@ -1,0 +1,22 @@
+{
+  "name": "message-drop",
+  "version": "1.0.0",
+  "description": "CLI for message-drop",
+  "type": "module",
+  "bin": {
+    "message-drop": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "keywords": [],
+  "license": "ISC",
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  }
+}
