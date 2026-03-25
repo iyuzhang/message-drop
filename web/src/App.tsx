@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  checkForAppUpdate,
   fetchMessages,
   getApiBase,
   postTextMessage,
@@ -7,6 +8,7 @@ import {
   uploadBlob,
 } from './api'
 import { useMessagePool } from './useMessagePool'
+import type { AppUpdateInfo } from './types'
 import './App.css'
 
 type AttachmentKind = 'file' | 'image'
@@ -24,6 +26,8 @@ export default function App() {
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null)
+  const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -33,9 +37,26 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    const ac = new AbortController()
+    void checkForAppUpdate({ signal: ac.signal }).then((info) => {
+      setAppUpdate(info)
+    })
+    return () => ac.abort()
+  }, [])
+
+  useEffect(() => {
     const applyViewport = () => {
-      const vh = window.visualViewport?.height ?? window.innerHeight
+      const viewport = window.visualViewport
+      const vh = viewport?.height ?? window.innerHeight
+      const bottomInset = Math.max(
+        0,
+        window.innerHeight - vh - (viewport?.offsetTop ?? 0),
+      )
       document.documentElement.style.setProperty('--app-vh', `${Math.round(vh)}px`)
+      document.documentElement.style.setProperty(
+        '--app-bottom-inset',
+        `${Math.round(bottomInset)}px`,
+      )
     }
     applyViewport()
     window.visualViewport?.addEventListener('resize', applyViewport)
@@ -151,10 +172,41 @@ export default function App() {
       <header className="bar">
         <span className="title">Message Drop</span>
         <span className={`conn conn-${conn}`}>{conn}</span>
-        <button type="button" className="ghost" onClick={() => void refresh()}>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => void refresh()}
+          aria-label="Refresh messages"
+        >
           Refresh
         </button>
       </header>
+
+      {appUpdate && !updateBannerDismissed ? (
+        <div className="update-banner" role="status">
+          <span>
+            New release{' '}
+            <strong>{appUpdate.latestTag}</strong> is available (you have{' '}
+            {appUpdate.currentVersion}).
+          </span>
+          <a
+            className="ghost small"
+            href={appUpdate.htmlUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View release
+          </a>
+          <button
+            type="button"
+            className="ghost small"
+            onClick={() => setUpdateBannerDismissed(true)}
+            aria-label="Dismiss update notice"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
 
       {error ? <div className="err">{error}</div> : null}
 
@@ -189,6 +241,7 @@ export default function App() {
                     type="button"
                     className="ghost small"
                     onClick={() => void onUnlock(m.id)}
+                    aria-label="Unlock message"
                   >
                     Unlock
                   </button>
@@ -200,89 +253,122 @@ export default function App() {
       </main>
 
       <footer className="composer">
-        <input
-          ref={imageInputRef}
-          className="hidden-input"
-          type="file"
-          accept="image/*"
-          onChange={(e) =>
-            onSelectAttachment(e.target.files?.[0] ?? null, 'image')
-          }
-        />
-        <input
-          ref={fileInputRef}
-          className="hidden-input"
-          type="file"
-          onChange={(e) =>
-            onSelectAttachment(e.target.files?.[0] ?? null, 'file')
-          }
-        />
+        <div
+          className="composer-toolbar"
+          role="group"
+          aria-label="Attachments"
+        >
+          <input
+            ref={imageInputRef}
+            className="hidden-input"
+            type="file"
+            accept="image/*"
+            aria-hidden
+            tabIndex={-1}
+            onChange={(e) =>
+              onSelectAttachment(e.target.files?.[0] ?? null, 'image')
+            }
+          />
+          <input
+            ref={fileInputRef}
+            className="hidden-input"
+            type="file"
+            aria-hidden
+            tabIndex={-1}
+            onChange={(e) =>
+              onSelectAttachment(e.target.files?.[0] ?? null, 'file')
+            }
+          />
 
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => imageInputRef.current?.click()}
-        >
-          图片
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          文件
-        </button>
-        {attachment ? (
-          <button type="button" className="ghost small" onClick={clearAttachment}>
-            清除
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => imageInputRef.current?.click()}
+            aria-label="Attach image"
+          >
+            Image
           </button>
-        ) : null}
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach file"
+          >
+            File
+          </button>
+        </div>
 
         {attachment ? (
-          <span className="attach-name">
-            {attachmentKind === 'image' ? '图片' : '文件'}: {attachment.name}
-          </span>
-        ) : null}
-        {imagePreviewUrl ? (
-          <img className="attach-preview" src={imagePreviewUrl} alt="preview" />
+          <div
+            className="composer-attachment"
+            role="status"
+            aria-live="polite"
+          >
+            {imagePreviewUrl ? (
+              <img
+                className="attach-preview"
+                src={imagePreviewUrl}
+                alt="Selected image preview"
+              />
+            ) : null}
+            <span className="attach-name">
+              {attachmentKind === 'image' ? 'Image' : 'File'}: {attachment.name}
+            </span>
+            <button
+              type="button"
+              className="ghost small"
+              onClick={clearAttachment}
+              aria-label="Remove attachment"
+            >
+              Clear
+            </button>
+          </div>
         ) : null}
 
-        <input
-          ref={inputRef}
-          className="field"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="Type a message…"
-          autoComplete="off"
-          aria-label="Message text"
-        />
-        <label className="pin-toggle">
+        <div className="composer-field-row">
           <input
-            type="checkbox"
-            checked={usePin}
-            onChange={(e) => setUsePin(e.target.checked)}
-          />
-          PIN
-        </label>
-        {usePin ? (
-          <input
-            className="field pin"
-            type="password"
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-            placeholder="PIN"
+            ref={inputRef}
+            className="field"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="Type a message…"
             autoComplete="off"
+            aria-label="Message text"
+            enterKeyHint="send"
           />
-        ) : null}
-        <button
-          type="button"
-          className="send"
-          onClick={() => void send()}
-          disabled={sending}
-        >
-          {sending ? 'Sending…' : 'Send'}
-        </button>
+        </div>
+
+        <div className="composer-actions">
+          <label className="pin-toggle">
+            <input
+              type="checkbox"
+              checked={usePin}
+              onChange={(e) => setUsePin(e.target.checked)}
+            />
+            PIN
+          </label>
+          {usePin ? (
+            <input
+              className="field pin"
+              type="password"
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+              placeholder="PIN"
+              autoComplete="off"
+              aria-label="Message PIN"
+            />
+          ) : null}
+          <button
+            type="button"
+            className="send"
+            onClick={() => void send()}
+            disabled={sending}
+            aria-busy={sending}
+          >
+            {sending ? 'Sending…' : 'Send'}
+          </button>
+        </div>
       </footer>
     </div>
   )

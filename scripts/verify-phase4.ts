@@ -1,6 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import { createMessageApp } from '../src/app.js'
 import { FileStore } from '../src/file-store.js'
@@ -55,6 +56,42 @@ async function main(): Promise<void> {
     server.close(() => resolve())
   })
   await rm(dir, { recursive: true, force: true })
+
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const appCssPath = join(repoRoot, 'web/src/App.css')
+  const appCss = await readFile(appCssPath, 'utf8')
+  const uiMarkers = [
+    '--touch-target-min',
+    '--app-bottom-inset',
+    '.composer-toolbar',
+    '.update-banner',
+  ]
+  for (const marker of uiMarkers) {
+    if (!appCss.includes(marker)) {
+      throw new Error(`App.css missing mobile UI baseline marker: ${marker}`)
+    }
+  }
+
+  const messagePoolPath = join(repoRoot, 'web/src/useMessagePool.ts')
+  const messagePoolSource = await readFile(messagePoolPath, 'utf8')
+  if (!messagePoolSource.includes('a.timestamp - b.timestamp')) {
+    throw new Error('Message list sort order is not oldest-first')
+  }
+
+  const mainActivityPath = join(
+    repoRoot,
+    'android/app/src/main/java/com/messagedrop/android/MainActivity.kt',
+  )
+  const mainActivitySource = await readFile(mainActivityPath, 'utf8')
+  const androidInsetsMarkers = [
+    'WindowCompat.setDecorFitsSystemWindows(window, false)',
+    'ViewCompat.setOnApplyWindowInsetsListener',
+  ]
+  for (const marker of androidInsetsMarkers) {
+    if (!mainActivitySource.includes(marker)) {
+      throw new Error(`MainActivity missing Android inset handling marker: ${marker}`)
+    }
+  }
 
   console.log('Phase 4 verification: OK')
 }

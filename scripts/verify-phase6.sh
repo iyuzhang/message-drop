@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export ANDROID_HOME="${ANDROID_HOME:-/home/yuzhang/Android/Sdk}"
-export ANDROID_SDK_ROOT="$ANDROID_HOME"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ANDROID_PROJECT="$REPO_ROOT/android"
 
-cd /home/yuzhang/iyuzhang/rh_repo/message-drop/android
+if [[ -n "${ANDROID_HOME:-}" ]]; then
+  export ANDROID_SDK_ROOT="$ANDROID_HOME"
+fi
+
+cd "$ANDROID_PROJECT"
 ./gradlew --no-daemon assembleDebug
 
 echo "Phase 6 verification: OK"

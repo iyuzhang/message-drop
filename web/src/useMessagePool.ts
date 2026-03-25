@@ -5,7 +5,7 @@ import type { PoolMessage } from './types'
 type ConnState = 'connecting' | 'live' | 'reconnecting'
 
 function sortMessages(map: Map<string, PoolMessage>): PoolMessage[] {
-  return [...map.values()].sort((a, b) => b.timestamp - a.timestamp)
+  return [...map.values()].sort((a, b) => a.timestamp - b.timestamp)
 }
 
 export function useMessagePool(apiBase: string) {

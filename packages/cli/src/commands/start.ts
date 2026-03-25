@@ -1,0 +1,298 @@
+/**
+ * Runs the message-drop server via local tsx CLI and repository src/server.ts.
+ */
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { findMessageDropRepoRootFromCli } from '../utils/paths.js'
+
+interface ParsedStartFlags {
+  host?: string
+  port?: number
+  dataDir?: string
+  open: boolean
+}
+
+const MESSAGE_DROP_URL_LINE =
+  /message-drop: (?<url>https?:\/\/[^\s]+)/
+
+function findMessageDropRepoRoot(): string {
+  const root = findMessageDropRepoRootFromCli()
+  if (root === undefined) {
+    throw new Error(
+      'message-drop start: could not find workspace root (expected src/server.ts next to pnpm-workspace.yaml). Run this from a full message-drop checkout.',
+    )
+  }
+  return root
+}
+
+function parsePort(value: string): number {
+  const n = Number(value)
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    throw new Error(`Invalid port: ${value} (expected integer 1-65535)`)
+  }
+  return n
+}
+
+function parseStartFlags(argv: string[]): ParsedStartFlags {
+  const out: ParsedStartFlags = { open: false }
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg === undefined) {
+      break
+    }
+    if (arg === '--help' || arg === '-h') {
+      return out
+    }
+    if (arg === '--open') {
+      out.open = true
+      continue
+    }
+    if (arg === '--host') {
+      const v = argv[++i]
+      if (v === undefined || v.startsWith('--')) {
+        throw new Error('--host requires a value')
+      }
+      out.host = v
+      continue
+    }
+    if (arg.startsWith('--host=')) {
+      out.host = arg.slice('--host='.length)
+      continue
+    }
+    if (arg === '--port') {
+      const v = argv[++i]
+      if (v === undefined || v.startsWith('--')) {
+        throw new Error('--port requires a value')
+      }
+      out.port = parsePort(v)
+      continue
+    }
+    if (arg.startsWith('--port=')) {
+      out.port = parsePort(arg.slice('--port='.length))
+      continue
+    }
+    if (arg === '--data-dir') {
+      const v = argv[++i]
+      if (v === undefined || v.startsWith('--')) {
+        throw new Error('--data-dir requires a value')
+      }
+      out.dataDir = v
+      continue
+    }
+    if (arg.startsWith('--data-dir=')) {
+      out.dataDir = arg.slice('--data-dir='.length)
+      continue
+    }
+    throw new Error(`Unknown option: ${arg}`)
+  }
+  return out
+}
+
+function buildChildEnv(flags: ParsedStartFlags): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  if (flags.host !== undefined) {
+    env.HOST = flags.host
+  }
+  if (flags.port !== undefined) {
+    env.PORT = String(flags.port)
+  }
+  if (flags.dataDir !== undefined) {
+    env.MESSAGE_DROP_DATA_PATH = join(flags.dataDir, 'messages.json')
+    env.MESSAGE_DROP_FILES_DIR = join(flags.dataDir, 'files')
+  }
+  return env
+}
+
+function displayHostForUrl(host: string): string {
+  return host === '0.0.0.0' ? '127.0.0.1' : host
+}
+
+function effectiveHost(flags: ParsedStartFlags): string {
+  if (flags.host !== undefined) {
+    return flags.host
+  }
+  return process.env.HOST ?? '0.0.0.0'
+}
+
+function effectivePort(flags: ParsedStartFlags): number {
+  if (flags.port !== undefined) {
+    return flags.port
+  }
+  const raw = process.env.PORT
+  if (raw !== undefined && raw !== '') {
+    return parsePort(raw)
+  }
+  return 8787
+}
+
+function isCiEnvironment(): boolean {
+  const v = process.env.CI
+  return v === '1' || v?.toLowerCase() === 'true'
+}
+
+function printStartHelp(): void {
+  console.log(`Usage: message-drop start [options]
+
+Options:
+  --host <addr>       Bind address (default: HOST env or 0.0.0.0)
+  --port <port>       Listen port (default: PORT env or 8787)
+  --data-dir <dir>    Store messages.json and files/ under this directory
+                      (overrides MESSAGE_DROP_DATA_PATH / MESSAGE_DROP_FILES_DIR)
+  --open              Open the server URL in a browser (skipped when CI is set; best-effort)
+  -h, --help          Show help`)
+}
+
+function openUrlBestEffort(url: string): void {
+  if (isCiEnvironment()) {
+    return
+  }
+  const platform = process.platform
+  if (platform === 'darwin') {
+    execFile('open', [url], () => {})
+  } else if (platform === 'win32') {
+    execFile('cmd', ['/c', 'start', '', url], () => {})
+  } else {
+    execFile('xdg-open', [url], () => {})
+  }
+}
+
+function attachOpenOnUrlLine(child: ChildProcess, fallbackUrl: string): void {
+  if (isCiEnvironment()) {
+    return
+  }
+  const { stdout, stderr } = child
+  if (stdout === null || stderr === null) {
+    return
+  }
+
+  let opened = false
+  let combined = ''
+
+  const FALLBACK_MS = 4000
+  const fallbackTimer = setTimeout(() => {
+    if (opened) {
+      return
+    }
+    opened = true
+    openUrlBestEffort(fallbackUrl)
+  }, FALLBACK_MS)
+
+  const considerOpening = (): void => {
+    if (opened) {
+      return
+    }
+    const m = combined.match(MESSAGE_DROP_URL_LINE)
+    const url = m?.groups?.url
+    if (url !== undefined) {
+      opened = true
+      clearTimeout(fallbackTimer)
+      openUrlBestEffort(url)
+    }
+  }
+
+  const appendAndForward = (
+    chunk: Buffer,
+    stream: NodeJS.WriteStream,
+  ): void => {
+    const s = chunk.toString('utf8')
+    stream.write(s)
+    combined = (combined + s).slice(-12_000)
+    considerOpening()
+  }
+
+  stdout.on('data', (ch: Buffer) => {
+    appendAndForward(ch, process.stdout)
+  })
+  stderr.on('data', (ch: Buffer) => {
+    appendAndForward(ch, process.stderr)
+  })
+
+  child.once('exit', () => {
+    clearTimeout(fallbackTimer)
+  })
+}
+
+export async function runStart(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    printStartHelp()
+    return
+  }
+
+  let flags: ParsedStartFlags
+  try {
+    flags = parseStartFlags(args)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(msg)
+    process.exitCode = 1
+    return
+  }
+
+  let port: number
+  try {
+    port = effectivePort(flags)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(msg)
+    process.exitCode = 1
+    return
+  }
+
+  const repoRoot = findMessageDropRepoRoot()
+  const tsxCli = join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs')
+  if (!existsSync(tsxCli)) {
+    console.error(
+      'message-drop start: missing node_modules/tsx/dist/cli.mjs — run pnpm install at the workspace root.',
+    )
+    process.exitCode = 1
+    return
+  }
+
+  const serverEntry = join(repoRoot, 'src', 'server.ts')
+  const childEnv = buildChildEnv(flags)
+  const host = effectiveHost(flags)
+  const fallbackOpenUrl = `http://${displayHostForUrl(host)}:${port}/`
+
+  const wantOpenWatcher = flags.open && !isCiEnvironment()
+  const spawnOpts = {
+    cwd: repoRoot,
+    env: childEnv,
+  }
+  const child = wantOpenWatcher
+    ? spawn(process.execPath, [tsxCli, serverEntry], {
+        ...spawnOpts,
+        stdio: ['inherit', 'pipe', 'pipe'],
+      })
+    : spawn(process.execPath, [tsxCli, serverEntry], {
+        ...spawnOpts,
+        stdio: 'inherit',
+      })
+
+  if (wantOpenWatcher) {
+    attachOpenOnUrlLine(child, fallbackOpenUrl)
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    child.on('error', (err) => {
+      console.error(
+        'message-drop start: failed to spawn node/tsx for server',
+        err,
+      )
+      reject(err)
+    })
+    child.on('exit', (code, signal) => {
+      if (signal !== null) {
+        resolve()
+        return
+      }
+      if (code === 0) {
+        resolve()
+        return
+      }
+      reject(
+        new Error(`message-drop server exited with code ${code ?? 'unknown'}`),
+      )
+    })
+  })
+}
