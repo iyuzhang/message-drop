@@ -1,0 +1,33 @@
+{
+  "name": "windows-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "main.cjs",
+  "description": "Windows tray agent for message-drop",
+  "scripts": {
+    "start": "electron ./main.cjs",
+    "build:server-runtime": "esbuild ../../src/server.ts --bundle --platform=node --format=esm --outfile=dist-resources/server/server.mjs",
+    "dist:win": "pnpm run build:server-runtime && electron-builder --win",
+    "test": "node --test"
+  },
+  "build": {
+    "files": [
+      "main.cjs",
+      "lib/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-resources/server/server.mjs",
+        "to": "server/server.mjs"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^41.0.4",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.27.4"
+  }
+}
