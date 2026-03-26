@@ -29,7 +29,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null)
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
 
@@ -131,6 +131,9 @@ export default function App() {
         })
       }
       setText('')
+      if (inputRef.current) {
+        inputRef.current.style.height = 'auto'
+      }
       if (usePin) setPin('')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'SEND_FAILED')
@@ -139,7 +142,7 @@ export default function App() {
     }
   }, [apiBase, text, usePin, pin, attachment, clearAttachment])
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void send()
@@ -178,7 +181,9 @@ export default function App() {
           className="ghost"
           onClick={() => void refresh()}
           aria-label="Refresh messages"
+          style={{ border: 'none', background: 'var(--code-bg)' }}
         >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '4px' }}><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
           Refresh
         </button>
       </header>
@@ -212,8 +217,15 @@ export default function App() {
       {error ? <div className="err">{error}</div> : null}
 
       <main className="main">
-        <ul className="list">
-          {messages.map((m) => (
+        {messages.length === 0 ? (
+          <div className="empty-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <p>No messages yet.</p>
+            <p style={{ fontSize: '0.875rem', opacity: 0.8 }}>Type a message or attach a file below to get started.</p>
+          </div>
+        ) : (
+          <ul className="list">
+            {messages.map((m) => (
             <li key={m.id} className="row">
               <div className="meta">
                 <time dateTime={new Date(m.timestamp).toISOString()}>
@@ -222,6 +234,11 @@ export default function App() {
                 {m.type === 'file' ? <span className="tag">file</span> : null}
               </div>
               <div className="body">
+                {m.has_pin && m.content === '' ? (
+                  <span className="locked">Locked</span>
+                ) : (
+                  <span>{m.content}</span>
+                )}
                 {m.file_url ? (
                   <a
                     className="file-link"
@@ -230,14 +247,10 @@ export default function App() {
                     rel={isAndroidWebView ? undefined : 'noreferrer'}
                     download
                   >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                     Download
                   </a>
                 ) : null}
-                {m.has_pin && m.content === '' ? (
-                  <span className="locked">Locked</span>
-                ) : (
-                  <span>{m.content}</span>
-                )}
                 {m.has_pin && m.content === '' ? (
                   <button
                     type="button"
@@ -252,6 +265,7 @@ export default function App() {
             </li>
           ))}
         </ul>
+        )}
       </main>
 
       <footer className="composer">
@@ -287,7 +301,9 @@ export default function App() {
             className="ghost"
             onClick={() => imageInputRef.current?.click()}
             aria-label="Attach image"
+            style={{ color: attachmentKind === 'image' ? 'var(--accent)' : undefined }}
           >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
             Image
           </button>
           <button
@@ -295,7 +311,9 @@ export default function App() {
             className="ghost"
             onClick={() => fileInputRef.current?.click()}
             aria-label="Attach file"
+            style={{ color: attachmentKind === 'file' ? 'var(--accent)' : undefined }}
           >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
             File
           </button>
         </div>
@@ -328,7 +346,7 @@ export default function App() {
         ) : null}
 
         <div className="composer-field-row">
-          <input
+          <textarea
             ref={inputRef}
             className="field"
             value={text}
@@ -337,7 +355,13 @@ export default function App() {
             placeholder="Type a message…"
             autoComplete="off"
             aria-label="Message text"
-            enterKeyHint="send"
+            rows={1}
+            style={{ minHeight: 'var(--touch-target-min)', maxHeight: '120px' }}
+            onInput={(e) => {
+              const target = e.target as HTMLTextAreaElement;
+              target.style.height = 'auto';
+              target.style.height = `${Math.min(target.scrollHeight, 120)}px`;
+            }}
           />
         </div>
 
@@ -368,7 +392,12 @@ export default function App() {
             disabled={sending}
             aria-busy={sending}
           >
-            {sending ? 'Sending…' : 'Send'}
+            {sending ? 'Sending…' : (
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                Send
+              </span>
+            )}
           </button>
         </div>
       </footer>

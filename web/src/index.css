@@ -7,6 +7,7 @@
   --accent: #2563eb;
   --accent-bg: rgba(37, 99, 235, 0.08);
   --accent-border: rgba(37, 99, 235, 0.35);
+  --row-bg: #ffffff;
   font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.45;
   color: var(--text);
@@ -22,15 +23,18 @@
     --text-h: #f9fafb;
     --bg: #0f1115;
     --border: #272b36;
-    --code-bg: #1a1f2a;
+    --code-bg: #0a0c10;
     --accent: #60a5fa;
     --accent-bg: rgba(96, 165, 250, 0.12);
     --accent-border: rgba(96, 165, 250, 0.4);
+    --row-bg: #161920;
   }
 }
 
 body {
   margin: 0;
+  -webkit-tap-highlight-color: transparent;
+  background: var(--code-bg);
 }
 
 #root {
