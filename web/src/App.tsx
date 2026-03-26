@@ -15,6 +15,7 @@ type AttachmentKind = 'file' | 'image'
 
 export default function App() {
   const apiBase = getApiBase()
+  const isAndroidWebView = typeof window !== 'undefined' && !!window.MessageDropAndroid
   const { messages, conn, mergeFromServer, upsert } = useMessagePool(apiBase)
   const [text, setText] = useState('')
   const [usePin, setUsePin] = useState(false)
@@ -225,8 +226,9 @@ export default function App() {
                   <a
                     className="file-link"
                     href={`${apiBase}${m.file_url}`}
-                    target="_blank"
-                    rel="noreferrer"
+                    target={isAndroidWebView ? undefined : '_blank'}
+                    rel={isAndroidWebView ? undefined : 'noreferrer'}
+                    download
                   >
                     Download
                   </a>

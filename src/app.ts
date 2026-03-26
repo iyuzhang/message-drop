@@ -137,9 +137,14 @@ export function createMessageApp(
       const id = c.req.param('id')
       const got = await files.get(id)
       if (!got) return c.body(null, 404)
+      const originalName = got.meta.originalName
+      const safeAsciiName = originalName
+        .replace(/["\\]/g, '_')
+        .replace(/[^\x20-\x7E]/g, '_')
+        .trim() || 'download.bin'
       const headers = new Headers({
         'Content-Type': got.meta.mime,
-        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(got.meta.originalName)}`,
+        'Content-Disposition': `attachment; filename="${safeAsciiName}"; filename*=UTF-8''${encodeURIComponent(originalName)}`,
       })
       const web = Readable.toWeb(got.stream)
       return new Response(web as BodyInit, { status: 200, headers })

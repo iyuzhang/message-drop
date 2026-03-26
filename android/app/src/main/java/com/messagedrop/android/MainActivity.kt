@@ -1,6 +1,8 @@
 package com.messagedrop.android
 
+import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.nsd.NsdManager
@@ -8,7 +10,11 @@ import android.net.nsd.NsdServiceInfo
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Bundle
+import android.os.Environment
 import android.util.Log
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.URLUtil
 import android.webkit.JavascriptInterface
 import android.view.View
 import android.webkit.ValueCallback
@@ -19,6 +25,7 @@ import android.widget.LinearLayout
 import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,6 +54,7 @@ class MainActivity : AppCompatActivity() {
 
   private var currentBaseUrl: String? = null
   private var discoverJob: Job? = null
+  private var retryDiscoveryJob: Job? = null
   private var lastDiscoveryAtMs: Long = 0
   private var connectivityManager: ConnectivityManager? = null
   private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -101,6 +109,7 @@ class MainActivity : AppCompatActivity() {
   override fun onDestroy() {
     super.onDestroy()
     discoverJob?.cancel()
+    retryDiscoveryJob?.cancel()
     networkCallback?.let { callback ->
       runCatching { connectivityManager?.unregisterNetworkCallback(callback) }
     }
@@ -153,11 +162,59 @@ class MainActivity : AppCompatActivity() {
         }
       }
     }
+    webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+      Log.i(logTag, "download requested url=$url")
+      enqueueDownload(url, userAgent, contentDisposition, mimeType)
+    }
     webView.webViewClient = object : WebViewClient() {
+      override fun shouldOverrideUrlLoading(
+        view: WebView?,
+        request: WebResourceRequest?,
+      ): Boolean {
+        val target = request?.url ?: return false
+        if (request.isForMainFrame && isFileDownloadUrl(target)) return false
+        return false
+      }
+
+      @Suppress("OVERRIDE_DEPRECATION")
+      override fun onReceivedError(
+        view: WebView?,
+        request: WebResourceRequest?,
+        error: WebResourceError?,
+      ) {
+        if (request?.isForMainFrame == true) {
+          markDisconnectedAndRetry("main-frame-error:${error?.description}")
+          return
+        }
+        super.onReceivedError(view, request, error)
+      }
+
+      @Suppress("DEPRECATION")
+      override fun onReceivedError(
+        view: WebView?,
+        errorCode: Int,
+        description: String?,
+        failingUrl: String?,
+      ) {
+        val activeUrl = currentBaseUrl
+        if (activeUrl != null && failingUrl != null && failingUrl.startsWith(activeUrl)) {
+          markDisconnectedAndRetry("legacy-main-frame-error:$description")
+          return
+        }
+        super.onReceivedError(view, errorCode, description, failingUrl)
+      }
+
       override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
         statusSpinner.visibility = View.GONE
       }
+    }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    if (currentBaseUrl == null) {
+      triggerDiscovery("resume")
     }
   }
 
@@ -197,6 +254,8 @@ class MainActivity : AppCompatActivity() {
     }
     Log.i(logTag, "triggerDiscovery reason=$reason")
     discoverJob?.cancel()
+    retryDiscoveryJob?.cancel()
+    retryDiscoveryJob = null
     discoverJob = lifecycleScope.launch {
       statusSpinner.visibility = View.VISIBLE
       statusText.text = getString(R.string.status_discovering)
@@ -210,8 +269,30 @@ class MainActivity : AppCompatActivity() {
         statusSpinner.visibility = View.GONE
         statusText.text = getString(R.string.status_not_found)
         loadOfflineHint()
+        scheduleDiscoveryRetry()
       }
     }
+  }
+
+  private fun scheduleDiscoveryRetry() {
+    if (currentBaseUrl != null) return
+    if (retryDiscoveryJob?.isActive == true) return
+    retryDiscoveryJob = lifecycleScope.launch {
+      delay(2500)
+      if (currentBaseUrl == null) {
+        triggerDiscovery("scheduled-retry")
+      }
+    }
+  }
+
+  private fun markDisconnectedAndRetry(reason: String) {
+    Log.w(logTag, "mark disconnected: $reason")
+    currentBaseUrl = null
+    statusSpinner.visibility = View.VISIBLE
+    statusText.text = getString(R.string.status_discovering)
+    loadOfflineHint()
+    triggerDiscovery("recover:$reason")
+    scheduleDiscoveryRetry()
   }
 
   private suspend fun discoverServerWithin(timeoutMs: Long): String? {
@@ -332,9 +413,46 @@ class MainActivity : AppCompatActivity() {
     if (baseUrl == currentBaseUrl) return
     Log.i(logTag, "loadEndpoint baseUrl=$baseUrl")
     currentBaseUrl = baseUrl
+    retryDiscoveryJob?.cancel()
+    retryDiscoveryJob = null
     statusSpinner.visibility = View.GONE
     statusText.text = getString(R.string.status_connected, baseUrl)
     webView.loadUrl(baseUrl)
+  }
+
+  private fun isFileDownloadUrl(uri: Uri): Boolean {
+    return uri.path?.startsWith("/api/files/") == true
+  }
+
+  private fun enqueueDownload(
+    url: String,
+    userAgent: String?,
+    contentDisposition: String?,
+    mimeType: String?,
+  ) {
+    val request = DownloadManager.Request(Uri.parse(url))
+    val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+    request.setTitle(fileName)
+    request.setDescription("Message Drop")
+    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+    if (!mimeType.isNullOrBlank()) {
+      request.setMimeType(mimeType)
+    }
+    if (!userAgent.isNullOrBlank()) {
+      request.addRequestHeader("User-Agent", userAgent)
+    }
+    runCatching {
+      val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+      dm.enqueue(request)
+      Toast.makeText(this, "Download started", Toast.LENGTH_SHORT).show()
+    }.onFailure { e ->
+      Log.w(logTag, "enqueue download failed: ${e.message}")
+      val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      runCatching { startActivity(intent) }
+    }
   }
 
   private fun showManualIpDialog() {
@@ -371,15 +489,87 @@ class MainActivity : AppCompatActivity() {
           <meta charset="utf-8" />
           <meta name="viewport" content="width=device-width,initial-scale=1" />
           <style>
-            body { font-family: sans-serif; margin: 0; padding: 20px; color: #111; }
-            h2 { margin: 0 0 8px; font-size: 18px; }
-            p { margin: 0; line-height: 1.5; }
-            code { background: #f2f2f2; padding: 2px 6px; border-radius: 4px; }
+            :root {
+              color-scheme: light dark;
+            }
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              min-height: 100vh;
+              display: grid;
+              place-items: center;
+              padding: 24px;
+              font-family: "Noto Sans", system-ui, sans-serif;
+              background:
+                radial-gradient(1200px 500px at 10% -10%, rgba(59,130,246,.20), transparent),
+                radial-gradient(900px 420px at 100% 110%, rgba(16,185,129,.14), transparent),
+                #f8fafc;
+              color: #0f172a;
+            }
+            .card {
+              width: min(560px, 100%);
+              border-radius: 20px;
+              background: rgba(255,255,255,.82);
+              border: 1px solid rgba(148,163,184,.24);
+              box-shadow: 0 10px 30px rgba(15,23,42,.08);
+              backdrop-filter: blur(6px);
+              padding: 22px 20px;
+            }
+            .title {
+              margin: 0 0 6px;
+              font-size: 20px;
+              font-weight: 700;
+              letter-spacing: .2px;
+            }
+            .sub {
+              margin: 0 0 14px;
+              line-height: 1.55;
+              color: #334155;
+            }
+            .pill {
+              display: inline-flex;
+              align-items: center;
+              gap: 8px;
+              margin-bottom: 10px;
+              border-radius: 999px;
+              background: #e2e8f0;
+              color: #0f172a;
+              padding: 6px 11px;
+              font-size: 12px;
+              font-weight: 600;
+            }
+            .dot {
+              width: 8px;
+              height: 8px;
+              border-radius: 50%;
+              background: #2563eb;
+              animation: pulse 1.2s infinite;
+            }
+            @keyframes pulse {
+              0%,100% { transform: scale(1); opacity: .9; }
+              50% { transform: scale(1.35); opacity: .45; }
+            }
+            .tip {
+              margin: 0;
+              font-size: 13px;
+              color: #475569;
+            }
+            code {
+              background: #e2e8f0;
+              color: #0f172a;
+              padding: 2px 6px;
+              border-radius: 6px;
+              font-size: 12px;
+            }
           </style>
         </head>
         <body>
-          <h2>Waiting for server</h2>
-          <p>Auto discovery failed. Long-press the top status text and input manual IP, e.g. <code>192.168.31.221:8787</code>.</p>
+          <section class="card">
+            <div class="pill"><span class="dot"></span>Trying to reconnect</div>
+            <h2 class="title">Message Drop is looking for your server</h2>
+            <p class="sub">Please keep this screen open. The app will auto-refresh once your server is online and reachable on the same LAN.</p>
+            <p class="tip">Need manual fallback? Long-press the top status and input <code>192.168.31.221:8787</code>.</p>
+          </section>
         </body>
       </html>
       """.trimIndent()

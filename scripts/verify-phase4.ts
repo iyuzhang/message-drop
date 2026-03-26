@@ -38,6 +38,8 @@ async function main(): Promise<void> {
 
   const dl0 = await fetch(`${base}${uj.url}`)
   if (!dl0.ok) throw new Error(`download: ${dl0.status}`)
+  const cd = dl0.headers.get('Content-Disposition') ?? ''
+  if (!cd.includes('filename=')) throw new Error('missing download filename header')
   const buf = new Uint8Array(await dl0.arrayBuffer())
   if (buf.length !== payload.length) throw new Error('download size')
 
@@ -86,10 +88,29 @@ async function main(): Promise<void> {
   const androidInsetsMarkers = [
     'WindowCompat.setDecorFitsSystemWindows(window, false)',
     'ViewCompat.setOnApplyWindowInsetsListener',
+    'webView.setDownloadListener',
+    'DownloadManager.Request',
+    'enqueueDownload(',
+    'onReceivedError',
+    'failingUrl',
+    'scheduleDiscoveryRetry',
+    'Trying to reconnect',
   ]
   for (const marker of androidInsetsMarkers) {
     if (!mainActivitySource.includes(marker)) {
       throw new Error(`MainActivity missing Android inset handling marker: ${marker}`)
+    }
+  }
+
+  const appTsxPath = join(repoRoot, 'web/src/App.tsx')
+  const appTsxSource = await readFile(appTsxPath, 'utf8')
+  const downloadMarkers = [
+    'const isAndroidWebView',
+    "target={isAndroidWebView ? undefined : '_blank'}",
+  ]
+  for (const marker of downloadMarkers) {
+    if (!appTsxSource.includes(marker)) {
+      throw new Error(`App.tsx missing Android download marker: ${marker}`)
     }
   }
 
