@@ -71,7 +71,9 @@ Use the Windows installer to run Message Drop in user-level tray mode without ma
 
 ### Install (user-level)
 
-1. Download the latest Windows installer from your GitHub Release assets.
+1. Download the Windows installer from GitHub Releases:
+   - Latest releases page: [https://github.com/iyuzhang/message-drop/releases](https://github.com/iyuzhang/message-drop/releases)
+   - Current installer release: [Windows Installer v1.0.0](https://github.com/iyuzhang/message-drop/releases/tag/win-v1.0.0)
 2. Run the installer from your Windows user session.
 3. Complete the setup wizard. The app installs into your user scope and starts the tray agent.
 
