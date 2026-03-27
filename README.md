@@ -65,6 +65,46 @@ Use `message-drop doctor` if `start` cannot find the workspace or runtime tools.
 
 Release automation is project-specific; this repo is set up so the client can check `https://api.github.com/repos/<owner>/<repo>/releases/latest` when that variable is configured.
 
+## Windows user installer (tray mode)
+
+Use the Windows installer to run Message Drop in user-level tray mode without manually setting up Node.js tooling.
+
+### Install (user-level)
+
+1. Download the latest Windows installer from your GitHub Release assets.
+2. Run the installer from your Windows user session.
+3. Complete the setup wizard. The app installs into your user scope and starts the tray agent.
+
+### Startup and autostart behavior
+
+- The tray agent performs silent startup after sign-in.
+- Autostart is enabled by default at install time.
+- If the tray icon is hidden, open the Windows notification overflow area to confirm the agent is running.
+
+### Upgrade path
+
+- Install a newer release over the existing installation.
+- User-level settings and runtime data are preserved across normal upgrades.
+- After upgrading, sign out and sign in (or restart Windows) to confirm startup behavior if needed.
+
+### Uninstall behavior
+
+- Uninstall from Windows Apps settings or the installer's uninstall entry.
+- User-level startup artifacts and tray startup registration are removed.
+- Runtime data/logs may remain for troubleshooting unless explicitly removed.
+
+### Runtime isolation and system impact
+
+- The installer uses private app-owned runtime paths under the current user profile.
+- No global Node.js installation is modified.
+- No system-wide PATH mutation is required for tray mode operation.
+
+### Troubleshooting
+
+- **Port conflict:** If tray status shows an error and logs indicate the configured port is already in use, stop the conflicting process or adjust server port configuration.
+- **Startup disabled:** If startup does not occur after sign-in, check Startup Apps settings and re-enable Message Drop autostart from the tray menu.
+- **Manual CLI fallback:** For manual recovery, run the project server directly from a repo checkout using `pnpm start` (or use the existing CLI workflow where available).
+
 ## Troubleshooting
 
 | Symptom | What to try |
