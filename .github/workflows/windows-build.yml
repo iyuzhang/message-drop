@@ -1,0 +1,53 @@
+name: Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'win-v*.*.*'
+
+concurrency:
+  group: windows-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure windows-agent exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "packages/windows-agent/package.json")) {
+            Write-Error "packages/windows-agent not found. Merge the windows installer branch before running this workflow."
+            exit 1
+          }
+
+      - name: Build Windows installer
+        run: pnpm --dir packages/windows-agent run dist:win
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            packages/windows-agent/dist/**
+            packages/windows-agent/release/**
+          if-no-files-found: error

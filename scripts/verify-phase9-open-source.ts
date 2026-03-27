@@ -60,8 +60,8 @@ function assertLicenseBasics(text: string, label: string): void {
     `${label}: license text should be substantial`,
   )
   assert.ok(
-    /isc|copyright/i.test(text),
-    `${label}: should identify ISC or copyright`,
+    /copyright|gnu general public license|gpl/i.test(text),
+    `${label}: should identify an open-source license`,
   )
 }
 

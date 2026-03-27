@@ -88,4 +88,4 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) and [SECURITY.md](./SECURITY.md).
 
 ## License
 
-ISC — see [LICENSE](./LICENSE).
+GPL-3.0 — see [LICENSE](./LICENSE).

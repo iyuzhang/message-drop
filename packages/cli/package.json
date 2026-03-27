@@ -15,7 +15,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "keywords": [],
-  "license": "ISC",
+  "license": "GPL-3.0-only",
   "devDependencies": {
     "typescript": "~5.9.3"
   }
