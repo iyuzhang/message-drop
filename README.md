@@ -41,18 +41,24 @@ pnpm run verify:all
 
 ## Global install and `start`
 
-Build and link the CLI from the repo root:
+Install from npm:
+
+```bash
+pnpm add -g message-drop
+```
+
+Then run:
+
+```bash
+message-drop start
+```
+
+For local development from a checkout, you can still build and link the CLI:
 
 ```bash
 pnpm install
 pnpm --dir packages/cli run build
 pnpm add -g ./packages/cli
-```
-
-Run the server (expects a full checkout with `src/server.ts` next to `pnpm-workspace.yaml`):
-
-```bash
-message-drop start
 ```
 
 Use `message-drop doctor` if `start` cannot find the workspace or runtime tools.
