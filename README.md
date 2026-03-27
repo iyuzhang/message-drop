@@ -1,10 +1,11 @@
 # message-drop
 
-**message-drop** is a small stack for **LAN file and message sharing**: a Node.js server (HTTP + WebSockets + optional mDNS discovery), a browser UI, and an Android app that wraps the same UI. Use it on a trusted local network to exchange short messages and files between devices without a central cloud service.
+**English:** `message-drop` is a lightweight stack for **LAN file and message sharing**: a Node.js server (HTTP + WebSockets + optional mDNS discovery), a browser UI, and an Android app wrapper.  
+**中文：**`message-drop` 是一个轻量级 **局域网消息与文件共享** 工具集：包含 Node.js 服务端（HTTP + WebSocket + 可选 mDNS 发现）、浏览器 UI，以及 Android WebView 客户端。
 
 **Keywords:** local network, LAN messaging, peer-friendly sharing, WebSocket fan-out, self-hosted, offline-first LAN, home lab.
 
-## Architecture and platforms
+## Architecture and platforms / 架构与平台
 
 | Layer | Where it runs | Stack / notes |
 |--------|----------------|---------------|
@@ -13,47 +14,55 @@
 | CLI | Same machines as server (Node.js) | `message-drop` — `start`, `doctor`, `autostart` |
 | Android | Android 8+ (typical) | WebView + native bridge; APK distributed via **GitHub Releases** |
 
-The server stores messages and uploaded files under configurable paths (see environment variables in source: `PORT`, `HOST`, `MESSAGE_DROP_DATA_PATH`, `MESSAGE_DROP_FILES_DIR`).
+**English:** The server stores messages and uploaded files under configurable paths (`PORT`, `HOST`, `MESSAGE_DROP_DATA_PATH`, `MESSAGE_DROP_FILES_DIR`).  
+**中文：**服务端会将消息与上传文件保存到可配置路径（`PORT`、`HOST`、`MESSAGE_DROP_DATA_PATH`、`MESSAGE_DROP_FILES_DIR`）。
 
-## Quick start (from a git checkout)
+## Quick start (from a git checkout) / 快速开始（源码方式）
 
-Prerequisites: [Node.js](https://nodejs.org/) 20+ and [pnpm](https://pnpm.io/).
+**Prerequisites / 前置条件：** [Node.js](https://nodejs.org/) 20+ and [pnpm](https://pnpm.io/).
 
 ```bash
 pnpm install
 pnpm start
 ```
 
-Then open the URL printed in the log (defaults to port **8787**).
+**English:** Open the URL printed in the log (default port `8787`).  
+**中文：**打开终端输出的地址（默认端口 `8787`）。
 
-Build the web UI when you need a production bundle:
+Build web UI production bundle / 构建 Web 生产包：
 
 ```bash
 pnpm --dir web run build
 ```
 
-Recommended local verification gate:
+Recommended verification gate / 建议发布前校验：
 
 ```bash
 pnpm run typecheck
 pnpm run verify:all
 ```
 
-## Global install and `start`
+## Global install and `start` / 全局安装与启动
 
-Install from npm:
+Install CLI from npm / 通过 npm 全局安装 CLI：
 
 ```bash
 pnpm add -g message-drop
 ```
 
-Then run:
+Run server / 启动服务：
 
 ```bash
 message-drop start
 ```
 
-For local development from a checkout, you can still build and link the CLI:
+Health check / 诊断命令：
+
+```bash
+message-drop doctor
+```
+
+For local development from a checkout, you can still build and link the CLI / 本地开发时也可使用源码 link 方式：
 
 ```bash
 pnpm install
@@ -61,79 +70,66 @@ pnpm --dir packages/cli run build
 pnpm add -g ./packages/cli
 ```
 
-Use `message-drop doctor` if `start` cannot find the workspace or runtime tools.
+## Android: install and update via GitHub Releases / Android 安装与更新
 
-## Android: install and update via GitHub Releases
+1. Open Releases page / 打开 Releases 页面。  
+2. Download latest APK and install / 下载最新 APK 并安装（可能需要允许未知来源安装）。  
+3. Set build-time env `VITE_RELEASE_GITHUB_REPO=owner/repo` for in-app update prompt / 如需 App 内更新提示，构建时设置 `VITE_RELEASE_GITHUB_REPO=owner/repo`。
 
-1. Open your project’s **Releases** page on GitHub.
-2. Download the latest **APK** asset and install it (you may need to allow installs from unknown sources).
-3. For update prompts inside the app, set build-time env **`VITE_RELEASE_GITHUB_REPO`** to `owner/repo` (same repository that publishes releases). The web client compares the app version to the latest release tag.
+## Windows user installer (tray mode) / Windows 安装包（托盘模式）
 
-Release automation is project-specific; this repo is set up so the client can check `https://api.github.com/repos/<owner>/<repo>/releases/latest` when that variable is configured.
+Use the Windows installer to run Message Drop in user-level tray mode / 使用 Windows 安装包以用户级托盘模式运行 Message Drop。
 
-## Windows user installer (tray mode)
+### Install (user-level) / 安装（用户级）
 
-Use the Windows installer to run Message Drop in user-level tray mode without manually setting up Node.js tooling.
-
-### Install (user-level)
-
-1. Download the Windows installer from GitHub Releases:
-   - Latest releases page: [https://github.com/iyuzhang/message-drop/releases](https://github.com/iyuzhang/message-drop/releases)
+1. Download installer from GitHub Releases / 从 GitHub Releases 下载：
+   - Latest releases: [https://github.com/iyuzhang/message-drop/releases](https://github.com/iyuzhang/message-drop/releases)
    - Current installer release: [Windows Installer v1.0.0](https://github.com/iyuzhang/message-drop/releases/tag/win-v1.0.0)
-2. Run the installer from your Windows user session.
-3. Complete the setup wizard. The app installs into your user scope and starts the tray agent.
+2. Run installer in your Windows account / 在当前 Windows 用户会话中运行安装器。  
+3. Finish setup wizard / 完成安装向导，程序会以托盘代理启动。
 
-### Startup and autostart behavior
+### Startup and autostart / 启动与自启动
 
-- The tray agent performs silent startup after sign-in.
-- Autostart is enabled by default at install time.
-- If the tray icon is hidden, open the Windows notification overflow area to confirm the agent is running.
+- Silent startup after sign-in / 登录后静默启动  
+- Autostart enabled by default / 默认启用开机自启  
+- Check hidden tray icons if not visible / 图标隐藏时请展开系统托盘查看
 
-### Upgrade path
+### Upgrade and uninstall / 升级与卸载
 
-- Install a newer release over the existing installation.
-- User-level settings and runtime data are preserved across normal upgrades.
-- After upgrading, sign out and sign in (or restart Windows) to confirm startup behavior if needed.
+- Install newer version in place / 覆盖安装新版本即可升级  
+- User settings/data usually preserved / 用户级数据通常会保留  
+- Uninstall via Windows Apps settings / 通过 Windows 应用设置卸载  
+- Startup artifacts removed on uninstall / 卸载会移除自启动注册项
 
-### Uninstall behavior
+### Runtime isolation / 运行时隔离
 
-- Uninstall from Windows Apps settings or the installer's uninstall entry.
-- User-level startup artifacts and tray startup registration are removed.
-- Runtime data/logs may remain for troubleshooting unless explicitly removed.
+- Uses private runtime paths under current user / 使用当前用户目录下的私有运行时路径  
+- Does not modify global Node.js / 不修改全局 Node.js 环境  
+- No system-wide PATH mutation required / 不需要改动系统级 PATH
 
-### Runtime isolation and system impact
+## Troubleshooting / 故障排查
 
-- The installer uses private app-owned runtime paths under the current user profile.
-- No global Node.js installation is modified.
-- No system-wide PATH mutation is required for tray mode operation.
-
-### Troubleshooting
-
-- **Port conflict:** If tray status shows an error and logs indicate the configured port is already in use, stop the conflicting process or adjust server port configuration.
-- **Startup disabled:** If startup does not occur after sign-in, check Startup Apps settings and re-enable Message Drop autostart from the tray menu.
-- **Manual CLI fallback:** For manual recovery, run the project server directly from a repo checkout using `pnpm start` (or use the existing CLI workflow where available).
-
-## Troubleshooting
-
-| Symptom | What to try |
+| Symptom / 现象 | What to try / 处理建议 |
 |---------|-------------|
-| Other devices cannot reach the server | Ensure the server binds to `0.0.0.0` (default) or your LAN IP; check firewall rules for the chosen **PORT**. |
-| Android app shows `Waiting for server` | First confirm the host server is actually running (`pnpm run start`). Then check same-LAN connectivity and inspect `adb logcat -d MessageDrop:I "*:S"` for `mdns resolved` / `discovery success` logs. |
-| Discovery does not show the service | mDNS is LAN- and OS-dependent; you can still connect by URL/IP. Run `message-drop doctor` on the host. |
-| CLI says it cannot find the workspace | Run `message-drop start` from an install that was linked from a **full** clone (not a standalone tarball of `packages/cli` alone). |
-| Linux autostart / systemd | `message-drop autostart enable` writes a **user** unit under `~/.config/systemd/user/` (or `$XDG_CONFIG_HOME/systemd/user/`) and runs `message-drop start`. `disable` turns off the unit but leaves the file unless you remove it. |
-| Android update check never appears | Confirm `VITE_RELEASE_GITHUB_REPO` was set at build time and that releases use semver-style tags (e.g. `v1.2.3`). |
+| Other devices cannot reach server / 其他设备连不上服务 | Ensure server binds `0.0.0.0` and firewall allows selected `PORT`. / 确认服务监听 `0.0.0.0`，并放通对应端口防火墙。 |
+| Android shows `Waiting for server` / Android 显示等待服务 | Confirm host is running (`pnpm run start`), then check same LAN and run `adb logcat -d MessageDrop:I "*:S"`. / 先确认主机服务已启动，再检查同一局域网和日志。 |
+| Discovery fails / 服务发现失败 | mDNS may vary by network; connect by URL/IP and run `message-drop doctor`. / mDNS 受网络环境影响，可改用 URL/IP 并执行诊断。 |
+| CLI cannot find workspace / CLI 找不到工作区 | Use npm global install path, or run from a full checkout if using linked CLI. / 优先使用 npm 全局安装；若用 link 方式需完整源码目录。 |
+| Linux autostart issues / Linux 自启动问题 | `message-drop autostart enable` writes user systemd unit and enables it; `disable` turns it off. / `enable` 写入并启用用户级 systemd，`disable` 关闭。 |
+| Android update check missing / Android 无更新提示 | Ensure `VITE_RELEASE_GITHUB_REPO` was set at build time and release tags follow semver. / 确认构建时已设置变量且 tag 符合 semver。 |
 
-For optional real-device smoke verification:
+Optional real-device smoke test / 可选真机冒烟测试：
 
 ```bash
 pnpm run verify:adb-smoke
 ```
 
-## Contributing and security
+## Contributing and security / 贡献与安全
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) and [SECURITY.md](./SECURITY.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md) and [SECURITY.md](./SECURITY.md).  
+请参见 [CONTRIBUTING.md](./CONTRIBUTING.md) 与 [SECURITY.md](./SECURITY.md)。
 
-## License
+## License / 许可证
 
-GPL-3.0 — see [LICENSE](./LICENSE).
+GPL-3.0 — see [LICENSE](./LICENSE).  
+GPL-3.0 —— 详见 [LICENSE](./LICENSE)。
