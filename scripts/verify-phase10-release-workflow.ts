@@ -89,7 +89,8 @@ void (function main(): void {
     'release.yml must build or publish from packages/cli',
   )
   assert.ok(
-    release.includes('pnpm publish') || release.includes('pnpm publish --dir'),
+    /pnpm\s+(--dir\s+\S+\s+)?publish/.test(release) ||
+      release.includes('pnpm publish --dir'),
     'release.yml must publish the CLI with pnpm publish',
   )
   assert.ok(
