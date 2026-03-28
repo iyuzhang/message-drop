@@ -6814,7 +6814,6 @@ var require_dist = __commonJS({
 
 // ../../src/start-server.ts
 var import_node_path3 = require("node:path");
-var import_node_url = require("node:url");
 
 // ../../node_modules/.pnpm/@hono+node-server@1.19.11_hono@4.12.8/node_modules/@hono/node-server/dist/index.mjs
 var import_http = require("http");
@@ -7244,7 +7243,7 @@ var responseViaResponseObject = async (res, outgoing, options = {}) => {
         });
         if (!chunk) {
           if (i === 1) {
-            await new Promise((resolve) => setTimeout(resolve));
+            await new Promise((resolve2) => setTimeout(resolve2));
             maxReadCount = 3;
             continue;
           }
@@ -9903,9 +9902,11 @@ function createMessageApp(store, opts = {}) {
       const id = c.req.param("id");
       const got = await files.get(id);
       if (!got) return c.body(null, 404);
+      const originalName = got.meta.originalName;
+      const safeAsciiName = originalName.replace(/["\\]/g, "_").replace(/[^\x20-\x7E]/g, "_").trim() || "download.bin";
       const headers = new Headers({
         "Content-Type": got.meta.mime,
-        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(got.meta.originalName)}`
+        "Content-Disposition": `attachment; filename="${safeAsciiName}"; filename*=UTF-8''${encodeURIComponent(originalName)}`
       });
       const web = import_node_stream.Readable.toWeb(got.stream);
       return new Response(web, { status: 200, headers });
@@ -9954,7 +9955,16 @@ function parseCreateBody(body) {
 var import_node_dgram = require("node:dgram");
 var import_node_os = require("node:os");
 var import_bonjour_service = __toESM(require_dist(), 1);
+function isDiscoveryVerbose() {
+  const raw2 = process.env.MESSAGE_DROP_DISCOVERY_VERBOSE;
+  if (raw2 === void 0) {
+    return false;
+  }
+  const normalized = raw2.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
 function startLanDiscovery(httpPort) {
+  const verbose = isDiscoveryVerbose();
   const udpPort = Number(
     process.env.MESSAGE_DROP_DISCOVERY_UDP_PORT || "47810"
   );
@@ -10009,7 +10019,7 @@ function startLanDiscovery(httpPort) {
       sock.send(msg, udpPort, host, (err) => {
         if (err) {
           console.error("[discovery] udp send error", err);
-        } else {
+        } else if (verbose) {
           console.log(`[discovery] udp beacon -> ${host}:${udpPort}`);
         }
         pending--;
@@ -10182,13 +10192,19 @@ function isPoolMessage(v) {
 }
 
 // ../../src/start-server.ts
-var import_meta = {};
-var __dirname = (0, import_node_path3.dirname)((0, import_node_url.fileURLToPath)(import_meta.url));
+function defaultDataRoot() {
+  const entry = process.argv[1];
+  if (typeof entry === "string" && entry !== "") {
+    return (0, import_node_path3.join)((0, import_node_path3.dirname)((0, import_node_path3.resolve)(entry)), "..", "data");
+  }
+  return (0, import_node_path3.join)(process.cwd(), "data");
+}
 function resolveMessageDropServerConfigFromEnv() {
   const port = parseListenPort(process.env.PORT, 8787);
   const host = process.env.HOST ?? "0.0.0.0";
-  const dataPath = process.env.MESSAGE_DROP_DATA_PATH ?? (0, import_node_path3.join)(__dirname, "..", "data", "messages.json");
-  const filesPath = process.env.MESSAGE_DROP_FILES_DIR ?? (0, import_node_path3.join)(__dirname, "..", "data", "files");
+  const dataRoot = defaultDataRoot();
+  const dataPath = process.env.MESSAGE_DROP_DATA_PATH ?? (0, import_node_path3.join)(dataRoot, "messages.json");
+  const filesPath = process.env.MESSAGE_DROP_FILES_DIR ?? (0, import_node_path3.join)(dataRoot, "files");
   return { host, port, dataPath, filesPath };
 }
 function startMessageDropServer(config) {

@@ -1,6 +1,6 @@
 {
   "name": "message-drop",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "CLI for message-drop",
   "type": "module",
   "bin": {

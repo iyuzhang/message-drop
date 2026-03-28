@@ -54,7 +54,7 @@ function resolveServerRuntime() {
   const executablePath = process.env.MESSAGE_DROP_SERVER_EXECUTABLE_PATH || process.execPath
   const explicitScriptPath = process.env.MESSAGE_DROP_SERVER_SCRIPT_PATH
   const packagedScriptPath = process.resourcesPath
-    ? path.join(process.resourcesPath, 'server', 'server.mjs')
+    ? path.join(process.resourcesPath, 'server', 'server.cjs')
     : null
 
   let serverScriptPath = null
@@ -66,7 +66,7 @@ function resolveServerRuntime() {
     serverScriptPath = packagedScriptPath
   } else if (app.isPackaged) {
     throw new Error(
-      'Packaged server runtime missing. Expected MESSAGE_DROP_SERVER_SCRIPT_PATH or resources/server/server.mjs.'
+      'Packaged server runtime missing. Expected MESSAGE_DROP_SERVER_SCRIPT_PATH or resources/server/server.cjs.'
     )
   } else {
     serverScriptPath = path.join(WORKSPACE_ROOT, 'src', 'server.ts')
@@ -89,10 +89,13 @@ function buildServerArgs(serverScriptPath) {
   return [serverScriptPath]
 }
 
-function createSpawnServer(logFilePath) {
+function createSpawnServer(logFilePath, runtimeRoot) {
   const { executablePath, serverScriptPath } = resolveServerRuntime()
   const args = buildServerArgs(serverScriptPath)
-  const cwd = process.env.MESSAGE_DROP_SERVER_CWD || WORKSPACE_ROOT
+  const defaultCwd = app.isPackaged ? process.resourcesPath : WORKSPACE_ROOT
+  const cwd = process.env.MESSAGE_DROP_SERVER_CWD || defaultCwd
+  const dataPath = path.join(runtimeRoot, 'messages.json')
+  const filesDir = path.join(runtimeRoot, 'files')
 
   return () => {
     if (!path.isAbsolute(executablePath)) {
@@ -109,7 +112,9 @@ function createSpawnServer(logFilePath) {
       windowsHide: true,
       env: {
         ...process.env,
-        ELECTRON_RUN_AS_NODE: '1'
+        ELECTRON_RUN_AS_NODE: '1',
+        MESSAGE_DROP_DATA_PATH: process.env.MESSAGE_DROP_DATA_PATH || dataPath,
+        MESSAGE_DROP_FILES_DIR: process.env.MESSAGE_DROP_FILES_DIR || filesDir
       }
     })
     if (child.stdout) {
@@ -232,7 +237,7 @@ async function bootstrap() {
   resolvedPaths = loaded.resolveWindowsAgentPaths()
 
   supervisor = loaded.createSupervisor({
-    spawnServer: createSpawnServer(resolvedPaths.logFile),
+    spawnServer: createSpawnServer(resolvedPaths.logFile, resolvedPaths.runtimeRoot),
     healthProbe: createHealthProbe(HEALTH_URL, HEALTH_TIMEOUT_MS)
   })
 

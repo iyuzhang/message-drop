@@ -22,6 +22,17 @@ If you use Windows, this is the recommended path with near-zero setup.
 - **Download**: Get the latest `windows-agent Setup.exe` from [GitHub Releases](https://github.com/iyuzhang/message-drop/releases).
 - **Features**: Runs silently in the tray, auto-starts on boot, and does not interfere with your global Node.js environment.
 
+## Windows User Installer (Tray Mode)
+
+- Autostart is enabled by default at install time.
+- Upgrade path: install a newer setup package over an existing installation.
+- Uninstall behavior: removes tray app binaries; user data under app storage can be retained for safety.
+- Private app-owned runtime paths are used for logs, pid, and message/file data.
+- No global Node.js installation is modified.
+- Port conflict: tray menu will expose retry/log guidance if service startup hits an in-use port.
+- Startup disabled: you can toggle autostart from tray menu.
+- Manual CLI fallback: advanced users can still run `message-drop` CLI directly.
+
 ### 2. Mobile First: Android App
 
 - **Download**: Get the latest APK from [GitHub Releases](https://github.com/iyuzhang/message-drop/releases).

@@ -52,6 +52,12 @@ void (function main(): void {
   }
   const windowsPkg = JSON.parse(readUtf8(root, 'packages/windows-agent/package.json')) as {
     scripts?: Record<string, string>
+    build?: {
+      productName?: string
+      appId?: string
+      win?: { icon?: string; target?: unknown }
+      extraResources?: Array<{ from?: string; to?: string }>
+    }
   }
 
   assert.ok(
@@ -92,8 +98,76 @@ void (function main(): void {
   )
   const distWinScript = normalizeWhitespace(windowsPkg.scripts?.['dist:win'] ?? '')
   assert.ok(
+    typeof windowsPkg.scripts?.['build:web-runtime'] === 'string',
+    'packages/windows-agent/package.json must define scripts.build:web-runtime',
+  )
+  const buildWebRuntimeScript = normalizeWhitespace(
+    windowsPkg.scripts?.['build:web-runtime'] ?? '',
+  )
+  assert.ok(
+    buildWebRuntimeScript.includes('web run build'),
+    'windows-agent build:web-runtime must build the web client assets',
+  )
+  assert.ok(
     distWinScript.includes('electron-builder --win'),
     'packages/windows-agent/package.json scripts.dist:win must include "electron-builder --win"',
+  )
+  assert.ok(
+    distWinScript.includes('build:web-runtime'),
+    'packages/windows-agent/package.json scripts.dist:win must include build:web-runtime',
+  )
+  const buildServerRuntimeScript = normalizeWhitespace(
+    windowsPkg.scripts?.['build:server-runtime'] ?? '',
+  )
+  assert.ok(
+    buildServerRuntimeScript.includes('--format=cjs'),
+    'windows-agent build:server-runtime must bundle in CommonJS format to avoid dynamic require runtime crashes on Windows',
+  )
+  assert.ok(
+    buildServerRuntimeScript.includes('server.cjs'),
+    'windows-agent build:server-runtime must output dist-resources/server/server.cjs',
+  )
+  assert.equal(
+    windowsPkg.build?.productName,
+    'Message Drop',
+    'windows-agent productName must be "Message Drop" for user-facing installer/app naming',
+  )
+  assert.ok(
+    typeof windowsPkg.build?.appId === 'string' &&
+      windowsPkg.build.appId.includes('messagedrop'),
+    'windows-agent build.appId must include "messagedrop"',
+  )
+  const resourceMappings = windowsPkg.build?.extraResources ?? []
+  assert.ok(
+    resourceMappings.some(
+      (mapping) =>
+        mapping.from === 'dist-resources/server/server.cjs' &&
+        mapping.to === 'server/server.cjs',
+    ),
+    'windows-agent extraResources must package server.cjs into resources/server/server.cjs',
+  )
+  assert.ok(
+    resourceMappings.some(
+      (mapping) =>
+        mapping.from === 'dist-resources/web/dist' &&
+        mapping.to === 'web/dist',
+    ),
+    'windows-agent extraResources must package web/dist assets for local UI rendering',
+  )
+  assert.ok(
+    typeof windowsPkg.build?.win?.icon === 'string' &&
+      windowsPkg.build.win.icon.length > 0,
+    'windows-agent build.win.icon must be configured',
+  )
+  const winIconRel = windowsPkg.build?.win?.icon ?? ''
+  assert.ok(
+    winIconRel !== '',
+    'windows-agent build.win.icon must not be empty',
+  )
+  assertFileExists(
+    root,
+    `packages/windows-agent/${winIconRel}`,
+    'phase11 windows icon',
   )
 
   const mainCjs = readUtf8(root, 'packages/windows-agent/main.cjs')

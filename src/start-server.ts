@@ -1,6 +1,5 @@
 import type { Server } from 'node:http'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join, resolve } from 'node:path'
 import { serve } from '@hono/node-server'
 import { WebSocket, WebSocketServer } from 'ws'
 import { createMessageApp } from './app.js'
@@ -11,13 +10,19 @@ import { telemetry } from './telemetry.js'
 import { MessageStore } from './store.js'
 import type { PoolMessage } from './types.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-
 export interface MessageDropServerConfig {
   host: string
   port: number
   dataPath: string
   filesPath: string
+}
+
+function defaultDataRoot(): string {
+  const entry = process.argv[1]
+  if (typeof entry === 'string' && entry !== '') {
+    return join(dirname(resolve(entry)), '..', 'data')
+  }
+  return join(process.cwd(), 'data')
 }
 
 /**
@@ -26,12 +31,13 @@ export interface MessageDropServerConfig {
 export function resolveMessageDropServerConfigFromEnv(): MessageDropServerConfig {
   const port = parseListenPort(process.env.PORT, 8787)
   const host = process.env.HOST ?? '0.0.0.0'
+  const dataRoot = defaultDataRoot()
   const dataPath =
     process.env.MESSAGE_DROP_DATA_PATH ??
-    join(__dirname, '..', 'data', 'messages.json')
+    join(dataRoot, 'messages.json')
   const filesPath =
     process.env.MESSAGE_DROP_FILES_DIR ??
-    join(__dirname, '..', 'data', 'files')
+    join(dataRoot, 'files')
   return { host, port, dataPath, filesPath }
 }
 

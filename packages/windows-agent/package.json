@@ -7,11 +7,14 @@
   "description": "Windows tray agent for message-drop",
   "scripts": {
     "start": "electron ./main.cjs",
-    "build:server-runtime": "esbuild ../../src/server.ts --bundle --platform=node --format=esm --outfile=dist-resources/server/server.mjs",
-    "dist:win": "pnpm run build:server-runtime && electron-builder --win",
+    "build:server-runtime": "esbuild ../../src/server.ts --bundle --platform=node --format=cjs --outfile=dist-resources/server/server.cjs",
+    "build:web-runtime": "pnpm --dir ../../web run build && node ./scripts/prepare-web-runtime.mjs",
+    "dist:win": "pnpm run build:server-runtime && pnpm run build:web-runtime && electron-builder --win",
     "test": "node --test"
   },
   "build": {
+    "productName": "Message Drop",
+    "appId": "com.messagedrop.windows.agent",
     "files": [
       "main.cjs",
       "lib/**/*",
@@ -20,10 +23,17 @@
     ],
     "extraResources": [
       {
-        "from": "dist-resources/server/server.mjs",
-        "to": "server/server.mjs"
+        "from": "dist-resources/server/server.cjs",
+        "to": "server/server.cjs"
+      },
+      {
+        "from": "dist-resources/web/dist",
+        "to": "web/dist"
       }
-    ]
+    ],
+    "win": {
+      "icon": "assets/icon.ico"
+    }
   },
   "devDependencies": {
     "electron": "^41.0.4",
