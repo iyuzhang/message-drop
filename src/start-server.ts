@@ -25,7 +25,7 @@ export interface MessageDropServerConfig {
  */
 export function resolveMessageDropServerConfigFromEnv(): MessageDropServerConfig {
   const port = parseListenPort(process.env.PORT, 8787)
-  const host = process.env.HOST ?? '127.0.0.1'
+  const host = process.env.HOST ?? '0.0.0.0'
   const dataPath =
     process.env.MESSAGE_DROP_DATA_PATH ??
     join(__dirname, '..', 'data', 'messages.json')

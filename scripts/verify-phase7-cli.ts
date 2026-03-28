@@ -647,11 +647,11 @@ async function mainAsync(): Promise<void> {
     'exec',
     'tsx',
     cliEntry,
-  ], '127.0.0.1')
+  ], '0.0.0.0')
 
   await verifyStartCommandReachesServer(root, 'node dist start', 'node', [
     distEntry,
-  ], '127.0.0.1')
+  ], '0.0.0.0')
 
   await verifyStartFromSimulatedGlobalInstall(root)
 

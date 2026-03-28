@@ -172,7 +172,7 @@ function effectiveHost(flags: ParsedStartFlags): string {
   if (flags.host !== undefined) {
     return flags.host
   }
-  return process.env.HOST ?? '127.0.0.1'
+  return process.env.HOST ?? '0.0.0.0'
 }
 
 function effectivePort(flags: ParsedStartFlags): number {
@@ -195,7 +195,7 @@ function printStartHelp(): void {
   console.log(`Usage: message-drop start [options]
 
 Options:
-  --host <addr>       Bind address (default: HOST env or 127.0.0.1)
+  --host <addr>       Bind address (default: HOST env or 0.0.0.0)
   --port <port>       Listen port (default: PORT env or 8787)
   --data-dir <dir>    Store messages.json and files/ under this directory
                       (overrides MESSAGE_DROP_DATA_PATH / MESSAGE_DROP_FILES_DIR)
