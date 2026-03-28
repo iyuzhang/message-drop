@@ -3,8 +3,16 @@
  * or from packaged runtime assets bundled in the CLI tarball.
  */
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import {
   findMessageDropRepoRootFromCli,
   resolveDefaultGlobalDataPaths,
@@ -16,6 +24,7 @@ interface ParsedStartFlags {
   port?: number
   dataDir?: string
   open: boolean
+  foreground: boolean
 }
 
 const MESSAGE_DROP_URL_LINE =
@@ -66,7 +75,7 @@ function parsePort(value: string): number {
 }
 
 function parseStartFlags(argv: string[]): ParsedStartFlags {
-  const out: ParsedStartFlags = { open: false }
+  const out: ParsedStartFlags = { open: false, foreground: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === undefined) {
@@ -77,6 +86,10 @@ function parseStartFlags(argv: string[]): ParsedStartFlags {
     }
     if (arg === '--open') {
       out.open = true
+      continue
+    }
+    if (arg === '--foreground') {
+      out.foreground = true
       continue
     }
     if (arg === '--host') {
@@ -182,7 +195,83 @@ Options:
   --data-dir <dir>    Store messages.json and files/ under this directory
                       (overrides MESSAGE_DROP_DATA_PATH / MESSAGE_DROP_FILES_DIR)
   --open              Open the server URL in a browser (skipped when CI is set; best-effort)
+  --foreground        Keep process attached in foreground (debug/advanced)
   -h, --help          Show help`)
+}
+
+interface StartRuntimeFiles {
+  readonly stateDir: string
+  readonly pidFile: string
+  readonly logFile: string
+}
+
+interface DaemonState {
+  readonly pid: number
+  readonly url: string
+  readonly startedAt: string
+}
+
+function resolveStartRuntimeFiles(
+  target: StartExecutionTarget,
+  childEnv: NodeJS.ProcessEnv,
+): StartRuntimeFiles {
+  const messagesPath =
+    childEnv.MESSAGE_DROP_DATA_PATH ??
+    (target.mode === 'repo-tsx'
+      ? join(target.cwd, 'data', 'messages.json')
+      : resolveDefaultGlobalDataPaths().messagesFile)
+  const stateDir = dirname(resolve(messagesPath))
+  return {
+    stateDir,
+    pidFile: join(stateDir, 'message-drop.pid'),
+    logFile: join(stateDir, 'message-drop.log'),
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) {
+    return false
+  }
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e: unknown) {
+    const err = e as NodeJS.ErrnoException
+    if (err.code === 'EPERM') {
+      return true
+    }
+    return false
+  }
+}
+
+function readDaemonState(path: string): DaemonState | null {
+  if (!existsSync(path)) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
+      pid?: unknown
+      url?: unknown
+      startedAt?: unknown
+    }
+    if (
+      typeof parsed.pid === 'number' &&
+      Number.isInteger(parsed.pid) &&
+      typeof parsed.url === 'string'
+    ) {
+      return {
+        pid: parsed.pid,
+        url: parsed.url,
+        startedAt:
+          typeof parsed.startedAt === 'string'
+            ? parsed.startedAt
+            : new Date().toISOString(),
+      }
+    }
+  } catch {
+    // Ignore malformed state and treat as stale.
+  }
+  return null
 }
 
 function openUrlBestEffort(url: string): void {
@@ -288,48 +377,83 @@ export async function runStart(args: string[]): Promise<void> {
   )
   const host = effectiveHost(flags)
   const fallbackOpenUrl = `http://${displayHostForUrl(host)}:${port}/`
-
-  const wantOpenWatcher = flags.open && !isCiEnvironment()
-  const spawnOpts = {
-    cwd: target.cwd,
-    env: childEnv,
-  }
+  const runtimeFiles = resolveStartRuntimeFiles(target, childEnv)
   const commandArgs =
     target.mode === 'repo-tsx'
       ? [target.entryOrCli, target.serverEntry!]
       : [target.entryOrCli]
+
+  if (!flags.foreground) {
+    mkdirSync(runtimeFiles.stateDir, { recursive: true })
+    const state = readDaemonState(runtimeFiles.pidFile)
+    if (state !== null && isPidAlive(state.pid)) {
+      console.log(
+        `message-drop start: already running in background (pid ${state.pid})`,
+      )
+      console.log(`message-drop: ${state.url}`)
+      console.log(`log: ${runtimeFiles.logFile}`)
+      if (flags.open) {
+        openUrlBestEffort(state.url)
+      }
+      return
+    }
+    if (existsSync(runtimeFiles.pidFile)) {
+      rmSync(runtimeFiles.pidFile, { force: true })
+    }
+    const logFd = openSync(runtimeFiles.logFile, 'a')
+    const daemon = spawn(process.execPath, commandArgs, {
+      cwd: target.cwd,
+      env: childEnv,
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+    })
+    closeSync(logFd)
+    daemon.unref()
+    const pid = daemon.pid
+    if (pid === undefined) {
+      throw new Error('message-drop start: failed to obtain daemon pid')
+    }
+    const snapshot: DaemonState = {
+      pid,
+      url: fallbackOpenUrl,
+      startedAt: new Date().toISOString(),
+    }
+    writeFileSync(runtimeFiles.pidFile, `${JSON.stringify(snapshot, null, 2)}\n`)
+    console.log(`message-drop start: started in background (pid ${pid})`)
+    console.log(`message-drop: ${fallbackOpenUrl}`)
+    console.log(`log: ${runtimeFiles.logFile}`)
+    if (flags.open) {
+      openUrlBestEffort(fallbackOpenUrl)
+    }
+    return
+  }
+
+  const wantOpenWatcher = flags.open && !isCiEnvironment()
   const child = wantOpenWatcher
     ? spawn(process.execPath, commandArgs, {
-        ...spawnOpts,
+        cwd: target.cwd,
+        env: childEnv,
         stdio: ['inherit', 'pipe', 'pipe'],
       })
     : spawn(process.execPath, commandArgs, {
-        ...spawnOpts,
+        cwd: target.cwd,
+        env: childEnv,
         stdio: 'inherit',
       })
-
   if (wantOpenWatcher) {
     attachOpenOnUrlLine(child, fallbackOpenUrl)
   }
-
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolvePromise, rejectPromise) => {
     child.on('error', (err) => {
-      console.error(
-        'message-drop start: failed to spawn node/tsx for server',
-        err,
-      )
-      reject(err)
+      console.error('message-drop start: failed to spawn runtime', err)
+      rejectPromise(err)
     })
     child.on('exit', (code, signal) => {
-      if (signal !== null) {
-        resolve()
+      if (signal !== null || code === 0) {
+        resolvePromise()
         return
       }
-      if (code === 0) {
-        resolve()
-        return
-      }
-      reject(
+      rejectPromise(
         new Error(`message-drop server exited with code ${code ?? 'unknown'}`),
       )
     })

@@ -6,8 +6,10 @@ import { once } from 'node:events'
 import {
   chmodSync,
   cpSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
@@ -22,6 +24,7 @@ const START_HELP_FLAGS = [
   '--port',
   '--data-dir',
   '--open',
+  '--foreground',
 ] as const
 
 interface CliPackageJson {
@@ -155,11 +158,29 @@ async function verifyStartCommandReachesServer(
   commandPrefix: string[],
 ): Promise<void> {
   const port = 33_000 + Math.floor(Math.random() * 2000)
-  const proc = spawn(command, [...commandPrefix, 'start', '--port', String(port), '--host', '127.0.0.1'], {
-    cwd: root,
-    env: { ...process.env, CI: 'true' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
+  const dataRoot = mkdtempSync(join(tmpdir(), 'md-start-foreground-'))
+  const proc = spawn(
+    command,
+    [
+      ...commandPrefix,
+      'start',
+      '--foreground',
+      '--port',
+      String(port),
+      '--host',
+      '127.0.0.1',
+    ],
+    {
+      cwd: root,
+      env: {
+        ...process.env,
+        CI: 'true',
+        MESSAGE_DROP_DATA_PATH: join(dataRoot, 'messages.json'),
+        MESSAGE_DROP_FILES_DIR: join(dataRoot, 'files'),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
 
   let buffer = ''
   const onData = (chunk: Buffer): void => {
@@ -244,6 +265,25 @@ async function verifyStartCommandReachesServer(
   await waitForProcExit(proc, 5000)
 }
 
+function readPidFromState(path: string): number {
+  const raw = readFileSync(path, 'utf8')
+  const parsed = JSON.parse(raw) as { pid?: unknown }
+  const pid = parsed.pid
+  assert(
+    typeof pid === 'number' && Number.isInteger(pid) && pid > 1,
+    `pid state must include valid pid, got ${raw}`,
+  )
+  return pid
+}
+
+function killIfAlive(pid: number): void {
+  try {
+    process.kill(pid, 'SIGTERM')
+  } catch {
+    // Ignore already-exited process.
+  }
+}
+
 async function verifyStartFromSimulatedGlobalInstall(
   root: string,
 ): Promise<void> {
@@ -276,97 +316,68 @@ async function verifyStartFromSimulatedGlobalInstall(
   )
 
   const port = 35_000 + Math.floor(Math.random() * 1000)
-  const proc = spawn(
+  const dataRoot = mkdtempSync(join(tmpdir(), 'md-start-daemon-'))
+  const pidFile = join(dataRoot, 'message-drop.pid')
+  const start = spawnSync(
     'node',
     [fakeDistEntry, 'start', '--port', String(port), '--host', '127.0.0.1'],
     {
       cwd: fakeRunDir,
-      env: { ...process.env, CI: 'true' },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CI: 'true',
+        MESSAGE_DROP_DATA_PATH: join(dataRoot, 'messages.json'),
+        MESSAGE_DROP_FILES_DIR: join(dataRoot, 'files'),
+      },
     },
   )
-
-  let buffer = ''
-  const onData = (chunk: Buffer): void => {
-    buffer += chunk.toString('utf8')
-  }
-  proc.stdout?.on('data', onData)
-  proc.stderr?.on('data', onData)
-
-  const url = await new Promise<string>((resolve, reject) => {
-    let settled = false
-    let intervalId: ReturnType<typeof setInterval> | undefined
-    let timeoutId: ReturnType<typeof setTimeout> | undefined
-
-    function finish(afterCleanup: () => void): void {
-      if (settled) {
-        return
-      }
-      settled = true
-      if (intervalId !== undefined) {
-        clearInterval(intervalId)
-        intervalId = undefined
-      }
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId)
-        timeoutId = undefined
-      }
-      proc.stdout?.off('data', onData)
-      proc.stderr?.off('data', onData)
-      proc.off('exit', onProcExit)
-      afterCleanup()
-    }
-
-    function onProcExit(
-      code: number | null,
-      signal: NodeJS.Signals | null,
-    ): void {
-      finish(() => {
-        if (signal === 'SIGTERM') {
-          reject(
-            new Error(
-              `global-like dist start received SIGTERM before URL (output=${buffer.slice(0, 400)})`,
-            ),
-          )
-          return
-        }
-        reject(
-          new Error(
-            `global-like dist start exited before URL (code=${code} signal=${signal}) output=${buffer.slice(0, 800)}`,
-          ),
-        )
-      })
-    }
-
-    intervalId = setInterval(() => {
-      const m = buffer.match(/message-drop: (http:\/\/[^\s]+)/)
-      if (m) {
-        finish(() => {
-          resolve(m[1]!)
-        })
-      }
-    }, 50)
-
-    timeoutId = setTimeout(() => {
-      finish(() => {
-        proc.kill('SIGTERM')
-        reject(new Error('global-like dist start timeout waiting for URL'))
-      })
-    }, 20_000)
-
-    proc.once('exit', onProcExit)
-  })
-
+  assert(start.error === undefined, String(start.error))
   assert(
-    url.includes(`:${port}/`) || url.includes(`:${port}`),
-    `global-like dist URL must include chosen port ${port}`,
+    start.status === 0,
+    `global-like dist daemon start failed: status=${start.status} stderr=${start.stderr}`,
   )
-
+  const startOut = `${start.stdout}\n${start.stderr}`
+  assert(
+    startOut.includes('started in background'),
+    'daemon start must report background startup',
+  )
+  assert(existsSync(pidFile), `daemon start must create pid file at ${pidFile}`)
+  const pid = readPidFromState(pidFile)
+  const url = `http://127.0.0.1:${port}/`
   const res = await fetchWithRetry(url)
-  assert(res.ok, `global-like dist GET ${url} expected ok, got ${res.status}`)
+  assert(res.ok, `global-like daemon GET ${url} expected ok, got ${res.status}`)
 
-  proc.kill('SIGTERM')
-  await waitForProcExit(proc, 5000)
+  const second = spawnSync(
+    'node',
+    [fakeDistEntry, 'start', '--port', String(port), '--host', '127.0.0.1'],
+    {
+      cwd: fakeRunDir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CI: 'true',
+        MESSAGE_DROP_DATA_PATH: join(dataRoot, 'messages.json'),
+        MESSAGE_DROP_FILES_DIR: join(dataRoot, 'files'),
+      },
+    },
+  )
+  assert(second.error === undefined, String(second.error))
+  assert(
+    second.status === 0,
+    `second daemon start should succeed without new process, got status=${second.status}`,
+  )
+  const secondOut = `${second.stdout}\n${second.stderr}`
+  assert(
+    secondOut.includes('already running in background'),
+    'second daemon start must detect existing process',
+  )
+  const pid2 = readPidFromState(pidFile)
+  assert(pid2 === pid, `daemon must reuse same pid: first=${pid} second=${pid2}`)
+  killIfAlive(pid)
+  if (existsSync(pidFile)) {
+    rmSync(pidFile, { force: true })
+  }
 }
 
 async function mainAsync(): Promise<void> {
