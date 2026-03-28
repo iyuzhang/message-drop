@@ -10,6 +10,7 @@
 - The project now includes:
   - publishable CLI workspace under `packages/cli`
   - `message-drop start`
+  - `message-drop status|stop`
   - `message-drop autostart enable|disable|status`
   - `message-drop doctor`
   - Android GitHub release update prompt
@@ -61,7 +62,9 @@
 
 ### CLI
 
-- `message-drop start` is working from the repo-linked CLI flow.
+- `message-drop start` defaults to background daemon mode and auto-opens browser best-effort.
+- `message-drop status` and `message-drop stop` manage daemon lifecycle.
+- Runtime fallback order is packaged runtime first, then repo source runtime for development.
 - `message-drop doctor` checks:
   - Node version
   - effective messages/files paths
@@ -75,7 +78,7 @@
 - For local phone testing, keep the server process running:
 
 ```bash
-pnpm run start
+pnpm message-drop start --foreground
 ```
 
 - If Clash TUN is enabled, LAN discovery may degrade. Prefer system proxy mode during local testing.

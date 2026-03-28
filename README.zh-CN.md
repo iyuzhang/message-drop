@@ -43,6 +43,8 @@ pnpm add -g message-drop
 message-drop start
 ```
 
+默认会以后台守护进程模式启动，并自动尝试打开本机浏览器访问地址（best-effort）。
+
 其他实用命令：
 
 ```bash

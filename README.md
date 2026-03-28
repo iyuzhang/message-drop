@@ -43,6 +43,8 @@ Start the server:
 message-drop start
 ```
 
+By default, `start` launches in background daemon mode and opens the local URL in your browser (best-effort).
+
 Other useful commands:
 
 ```bash

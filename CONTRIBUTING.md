@@ -11,7 +11,7 @@ Thanks for helping improve message-drop. This document describes how we expect c
 
 1. Clone the repository.
 2. Install dependencies: `pnpm install`
-3. Run the server: `pnpm start`
+3. Run the server: `pnpm message-drop start --foreground`
 4. For the web app in dev mode: `pnpm --dir web dev`
 5. Before opening a PR, run the full verification suite: `pnpm run verify:all`
 
@@ -24,7 +24,7 @@ Thanks for helping improve message-drop. This document describes how we expect c
 
 ## CLI package
 
-The published npm binary lives under `packages/cli`. After changing CLI sources, run `pnpm --dir packages/cli run build` and exercise `message-drop start` / `doctor` from a linked global install if your change affects those paths.
+The published npm binary lives under `packages/cli`. After changing CLI sources, run `pnpm --dir packages/cli run build` and verify daemon lifecycle from a global install (`message-drop start`, `message-drop status`, `message-drop stop`, `message-drop doctor`).
 
 ## Code of conduct
 
