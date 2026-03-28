@@ -47,6 +47,8 @@ message-drop start
 
 ```bash
 message-drop doctor           # 环境诊断与路径查看
+message-drop status           # 查看后台守护进程状态
+message-drop stop             # 停止后台守护进程
 message-drop autostart enable # 设置开机自启 (支持 Linux systemd / Windows 启动项)
 ```
 

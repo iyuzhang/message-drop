@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const REQUIRED_COMMANDS = ['start', 'autostart', 'doctor'] as const
+const REQUIRED_COMMANDS = ['start', 'status', 'stop', 'autostart', 'doctor'] as const
 
 const START_HELP_FLAGS = [
   '--host',
@@ -374,6 +374,70 @@ async function verifyStartFromSimulatedGlobalInstall(
   )
   const pid2 = readPidFromState(pidFile)
   assert(pid2 === pid, `daemon must reuse same pid: first=${pid} second=${pid2}`)
+
+  const status = spawnSync('node', [fakeDistEntry, 'status'], {
+    cwd: fakeRunDir,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      MESSAGE_DROP_DATA_PATH: join(dataRoot, 'messages.json'),
+      MESSAGE_DROP_FILES_DIR: join(dataRoot, 'files'),
+    },
+  })
+  assert(status.error === undefined, String(status.error))
+  assert(
+    status.status === 0,
+    `status should report running daemon: status=${status.status} stderr=${status.stderr}`,
+  )
+  const statusOut = `${status.stdout}\n${status.stderr}`
+  assert(
+    statusOut.includes('message-drop status: running'),
+    'status command must report running daemon',
+  )
+
+  const stop = spawnSync('node', [fakeDistEntry, 'stop'], {
+    cwd: fakeRunDir,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      MESSAGE_DROP_DATA_PATH: join(dataRoot, 'messages.json'),
+      MESSAGE_DROP_FILES_DIR: join(dataRoot, 'files'),
+    },
+  })
+  assert(stop.error === undefined, String(stop.error))
+  assert(
+    stop.status === 0,
+    `stop should terminate daemon: status=${stop.status} stderr=${stop.stderr}`,
+  )
+  const stopOut = `${stop.stdout}\n${stop.stderr}`
+  assert(
+    stopOut.includes('message-drop stop: stopped'),
+    'stop command must confirm daemon termination',
+  )
+  assert(!existsSync(pidFile), 'stop command must remove pid file')
+
+  const statusAfterStop = spawnSync('node', [fakeDistEntry, 'status'], {
+    cwd: fakeRunDir,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      MESSAGE_DROP_DATA_PATH: join(dataRoot, 'messages.json'),
+      MESSAGE_DROP_FILES_DIR: join(dataRoot, 'files'),
+    },
+  })
+  assert(
+    statusAfterStop.error === undefined,
+    String(statusAfterStop.error),
+  )
+  assert(
+    statusAfterStop.status === 1,
+    `status after stop expected exit 1, got ${statusAfterStop.status}`,
+  )
+  const statusAfterStopOut = `${statusAfterStop.stdout}\n${statusAfterStop.stderr}`
+  assert(
+    statusAfterStopOut.includes('message-drop status: not running'),
+    'status after stop must report not running',
+  )
   killIfAlive(pid)
   if (existsSync(pidFile)) {
     rmSync(pidFile, { force: true })

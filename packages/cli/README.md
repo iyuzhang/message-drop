@@ -14,6 +14,8 @@ pnpm add -g message-drop
 
 ```bash
 message-drop start
+message-drop status
+message-drop stop
 message-drop doctor
 message-drop autostart enable
 ```

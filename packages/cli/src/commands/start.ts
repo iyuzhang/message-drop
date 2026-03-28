@@ -8,16 +8,21 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { join } from 'node:path'
 import {
   findMessageDropRepoRootFromCli,
   resolveDefaultGlobalDataPaths,
   resolvePackagedRuntimePathsFromCli,
 } from '../utils/paths.js'
+import {
+  isPidAlive,
+  readDaemonState,
+  resolveDaemonRuntimeFiles,
+  type DaemonState,
+} from '../utils/daemon-state.js'
 
 interface ParsedStartFlags {
   host?: string
@@ -199,81 +204,6 @@ Options:
   -h, --help          Show help`)
 }
 
-interface StartRuntimeFiles {
-  readonly stateDir: string
-  readonly pidFile: string
-  readonly logFile: string
-}
-
-interface DaemonState {
-  readonly pid: number
-  readonly url: string
-  readonly startedAt: string
-}
-
-function resolveStartRuntimeFiles(
-  target: StartExecutionTarget,
-  childEnv: NodeJS.ProcessEnv,
-): StartRuntimeFiles {
-  const messagesPath =
-    childEnv.MESSAGE_DROP_DATA_PATH ??
-    (target.mode === 'repo-tsx'
-      ? join(target.cwd, 'data', 'messages.json')
-      : resolveDefaultGlobalDataPaths().messagesFile)
-  const stateDir = dirname(resolve(messagesPath))
-  return {
-    stateDir,
-    pidFile: join(stateDir, 'message-drop.pid'),
-    logFile: join(stateDir, 'message-drop.log'),
-  }
-}
-
-function isPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 1) {
-    return false
-  }
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (e: unknown) {
-    const err = e as NodeJS.ErrnoException
-    if (err.code === 'EPERM') {
-      return true
-    }
-    return false
-  }
-}
-
-function readDaemonState(path: string): DaemonState | null {
-  if (!existsSync(path)) {
-    return null
-  }
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
-      pid?: unknown
-      url?: unknown
-      startedAt?: unknown
-    }
-    if (
-      typeof parsed.pid === 'number' &&
-      Number.isInteger(parsed.pid) &&
-      typeof parsed.url === 'string'
-    ) {
-      return {
-        pid: parsed.pid,
-        url: parsed.url,
-        startedAt:
-          typeof parsed.startedAt === 'string'
-            ? parsed.startedAt
-            : new Date().toISOString(),
-      }
-    }
-  } catch {
-    // Ignore malformed state and treat as stale.
-  }
-  return null
-}
-
 function openUrlBestEffort(url: string): void {
   if (isCiEnvironment()) {
     return
@@ -377,7 +307,7 @@ export async function runStart(args: string[]): Promise<void> {
   )
   const host = effectiveHost(flags)
   const fallbackOpenUrl = `http://${displayHostForUrl(host)}:${port}/`
-  const runtimeFiles = resolveStartRuntimeFiles(target, childEnv)
+  const runtimeFiles = resolveDaemonRuntimeFiles(flags.dataDir, childEnv)
   const commandArgs =
     target.mode === 'repo-tsx'
       ? [target.entryOrCli, target.serverEntry!]

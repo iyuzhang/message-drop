@@ -2,11 +2,15 @@
 import { runAutostart } from './commands/autostart.js'
 import { runDoctor } from './commands/doctor.js'
 import { runStart } from './commands/start.js'
+import { runStatus } from './commands/status.js'
+import { runStop } from './commands/stop.js'
 
 const USAGE = `message-drop — local messaging CLI
 
 Commands:
   start       Run the HTTP server
+  status      Show background daemon status
+  stop        Stop the background daemon
   autostart   Show or manage autostart (see autostart --help)
   doctor      Diagnose environment for install/start
 
@@ -18,6 +22,8 @@ type CommandRunner = (args: string[]) => Promise<void>
 
 const ROUTER: Record<string, CommandRunner> = {
   start: runStart,
+  status: runStatus,
+  stop: runStop,
   autostart: runAutostart,
   doctor: runDoctor,
 }
