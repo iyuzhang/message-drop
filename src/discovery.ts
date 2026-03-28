@@ -7,7 +7,17 @@ export interface DiscoveryHandle {
   stop: () => void
 }
 
+function isDiscoveryVerbose(): boolean {
+  const raw = process.env.MESSAGE_DROP_DISCOVERY_VERBOSE
+  if (raw === undefined) {
+    return false
+  }
+  const normalized = raw.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes'
+}
+
 export function startLanDiscovery(httpPort: number): DiscoveryHandle {
+  const verbose = isDiscoveryVerbose()
   const udpPort = Number(
     process.env.MESSAGE_DROP_DISCOVERY_UDP_PORT || '47810',
   )
@@ -68,7 +78,7 @@ export function startLanDiscovery(httpPort: number): DiscoveryHandle {
       sock.send(msg, udpPort, host, (err) => {
         if (err) {
           console.error('[discovery] udp send error', err)
-        } else {
+        } else if (verbose) {
           console.log(`[discovery] udp beacon -> ${host}:${udpPort}`)
         }
         pending--

@@ -156,9 +156,17 @@ async function verifyStartCommandReachesServer(
   label: string,
   command: string,
   commandPrefix: string[],
+  expectedBindHost: string,
 ): Promise<void> {
   const port = 33_000 + Math.floor(Math.random() * 2000)
   const dataRoot = mkdtempSync(join(tmpdir(), 'md-start-foreground-'))
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    CI: 'true',
+    MESSAGE_DROP_DATA_PATH: join(dataRoot, 'messages.json'),
+    MESSAGE_DROP_FILES_DIR: join(dataRoot, 'files'),
+  }
+  delete childEnv.HOST
   const proc = spawn(
     command,
     [
@@ -167,17 +175,10 @@ async function verifyStartCommandReachesServer(
       '--foreground',
       '--port',
       String(port),
-      '--host',
-      '127.0.0.1',
     ],
     {
       cwd: root,
-      env: {
-        ...process.env,
-        CI: 'true',
-        MESSAGE_DROP_DATA_PATH: join(dataRoot, 'messages.json'),
-        MESSAGE_DROP_FILES_DIR: join(dataRoot, 'files'),
-      },
+      env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   )
@@ -257,6 +258,10 @@ async function verifyStartCommandReachesServer(
     url.includes(`:${port}/`) || url.includes(`:${port}`),
     `${label}: URL must include chosen port ${port}`,
   )
+  assert(
+    buffer.includes(`[server] listening http://${expectedBindHost}:${port}`),
+    `${label}: expected server bind host ${expectedBindHost}, output=${buffer.slice(0, 600)}`,
+  )
 
   const res = await fetchWithRetry(url)
   assert(res.ok, `${label}: GET ${url} expected ok, got ${res.status}`)
@@ -318,18 +323,20 @@ async function verifyStartFromSimulatedGlobalInstall(
   const port = 35_000 + Math.floor(Math.random() * 1000)
   const dataRoot = mkdtempSync(join(tmpdir(), 'md-start-daemon-'))
   const pidFile = join(dataRoot, 'message-drop.pid')
+  const daemonEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    CI: 'true',
+    MESSAGE_DROP_DATA_PATH: join(dataRoot, 'messages.json'),
+    MESSAGE_DROP_FILES_DIR: join(dataRoot, 'files'),
+  }
+  delete daemonEnv.HOST
   const start = spawnSync(
     'node',
-    [fakeDistEntry, 'start', '--port', String(port), '--host', '127.0.0.1'],
+    [fakeDistEntry, 'start', '--port', String(port)],
     {
       cwd: fakeRunDir,
       encoding: 'utf8',
-      env: {
-        ...process.env,
-        CI: 'true',
-        MESSAGE_DROP_DATA_PATH: join(dataRoot, 'messages.json'),
-        MESSAGE_DROP_FILES_DIR: join(dataRoot, 'files'),
-      },
+      env: daemonEnv,
     },
   )
   assert(start.error === undefined, String(start.error))
@@ -350,16 +357,11 @@ async function verifyStartFromSimulatedGlobalInstall(
 
   const second = spawnSync(
     'node',
-    [fakeDistEntry, 'start', '--port', String(port), '--host', '127.0.0.1'],
+    [fakeDistEntry, 'start', '--port', String(port)],
     {
       cwd: fakeRunDir,
       encoding: 'utf8',
-      env: {
-        ...process.env,
-        CI: 'true',
-        MESSAGE_DROP_DATA_PATH: join(dataRoot, 'messages.json'),
-        MESSAGE_DROP_FILES_DIR: join(dataRoot, 'files'),
-      },
+      env: daemonEnv,
     },
   )
   assert(second.error === undefined, String(second.error))
@@ -645,11 +647,11 @@ async function mainAsync(): Promise<void> {
     'exec',
     'tsx',
     cliEntry,
-  ])
+  ], '127.0.0.1')
 
   await verifyStartCommandReachesServer(root, 'node dist start', 'node', [
     distEntry,
-  ])
+  ], '127.0.0.1')
 
   await verifyStartFromSimulatedGlobalInstall(root)
 

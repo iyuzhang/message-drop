@@ -26,7 +26,7 @@
   - CLI/shared bootstrap: `src/start-server.ts`
 - Android app package: `com.messagedrop.android`
 - Default server bind:
-  - host: `0.0.0.0`
+  - host: `127.0.0.1`
   - port: `8787`
 
 ## 3) Latest Verified Behaviors

@@ -72,7 +72,7 @@ pnpm --dir web run build
 
 | Symptom | What to try |
 | --- | --- |
-| Other devices cannot reach the server | Ensure the server listens on `0.0.0.0` and your firewall allows `PORT` (default 8787). |
+| Other devices cannot reach the server | Default bind is local-only `127.0.0.1`. For LAN access, start with `--host 0.0.0.0` and ensure your firewall allows `PORT` (default 8787). |
 | Android keeps showing `Waiting for server` | 1) Ensure the host server is running. 2) Ensure phone and host are on the same LAN. 3) Check whether router blocks mDNS/UDP broadcast. |
 | Discovery is unstable | Long-press the top status bar in Android app, then manually enter host IP and port. Run `message-drop doctor` on host to view usable IPs. |
 
