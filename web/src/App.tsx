@@ -29,6 +29,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null)
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false)
+  const [fatalError, setFatalError] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -73,6 +74,29 @@ export default function App() {
       if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl)
     }
   }, [imagePreviewUrl])
+
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => {
+      const msg = event.message || 'UNCAUGHT_ERROR'
+      setFatalError(msg)
+    }
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason
+      const msg =
+        reason instanceof Error
+          ? reason.message
+          : typeof reason === 'string'
+            ? reason
+            : 'UNHANDLED_REJECTION'
+      setFatalError(msg)
+    }
+    window.addEventListener('error', onError)
+    window.addEventListener('unhandledrejection', onUnhandledRejection)
+    return () => {
+      window.removeEventListener('error', onError)
+      window.removeEventListener('unhandledrejection', onUnhandledRejection)
+    }
+  }, [])
 
   const clearAttachment = useCallback(() => {
     if (imagePreviewUrl) {
@@ -169,6 +193,32 @@ export default function App() {
     } catch {
       setError('REFRESH_FAILED')
     }
+  }
+
+  if (fatalError) {
+    return (
+      <div className="app">
+        <header className="bar">
+          <span className="title">Message Drop</span>
+          <span className="conn conn-offline">offline</span>
+        </header>
+        <main className="main">
+          <div className="empty-state">
+            <p>App rendering failed.</p>
+            <p style={{ fontSize: '0.875rem', opacity: 0.8 }}>
+              {fatalError}
+            </p>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
+          </div>
+        </main>
+      </div>
+    )
   }
 
   return (
