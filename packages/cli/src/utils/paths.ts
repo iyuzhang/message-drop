@@ -1,19 +1,22 @@
 /**
  * Resolves repository and data paths used by CLI diagnostics.
  */
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-/**
- * Walks upward from this module to find a message-drop workspace root.
- */
-export function findMessageDropRepoRootFromCli(): string | undefined {
-  let dir = dirname(fileURLToPath(import.meta.url))
+function scanUpwardForRepoRoot(startDir: string): string | undefined {
+  let dir = resolve(startDir)
   for (let depth = 0; depth < 24; depth++) {
     const serverTs = join(dir, 'src', 'server.ts')
     const workspace = join(dir, 'pnpm-workspace.yaml')
-    if (existsSync(serverTs) && existsSync(workspace)) {
+    const rootPkg = join(dir, 'package.json')
+    if (
+      existsSync(serverTs) &&
+      existsSync(workspace) &&
+      isMessageDropWorkspacePackage(rootPkg)
+    ) {
       return dir
     }
     const parent = dirname(dir)
@@ -23,6 +26,87 @@ export function findMessageDropRepoRootFromCli(): string | undefined {
     dir = parent
   }
   return undefined
+}
+
+function isMessageDropWorkspacePackage(packageJsonPath: string): boolean {
+  if (!existsSync(packageJsonPath)) {
+    return false
+  }
+  try {
+    const raw = readFileSync(packageJsonPath, 'utf8')
+    const parsed = JSON.parse(raw) as { name?: unknown }
+    return parsed.name === 'message-drop-workspace'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Finds a message-drop workspace root.
+ *
+ * Priority:
+ * 1) walk upward from this CLI module location (development checkout / linked CLI)
+ * 2) walk upward from process.cwd() (global install invoked from a checkout path)
+ */
+export function findMessageDropRepoRootFromCli(): string | undefined {
+  const fromModule = scanUpwardForRepoRoot(
+    dirname(fileURLToPath(import.meta.url)),
+  )
+  if (fromModule !== undefined) {
+    return fromModule
+  }
+  return scanUpwardForRepoRoot(process.cwd())
+}
+
+export interface GlobalDataPaths {
+  readonly messagesFile: string
+  readonly filesDir: string
+}
+
+function defaultGlobalDataDir(): string {
+  const xdg = process.env.XDG_DATA_HOME
+  if (xdg !== undefined && xdg !== '') {
+    return join(resolve(xdg), 'message-drop')
+  }
+  if (process.platform === 'darwin') {
+    return join(homedir(), 'Library', 'Application Support', 'message-drop')
+  }
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA
+    if (appData !== undefined && appData !== '') {
+      return join(resolve(appData), 'message-drop')
+    }
+  }
+  return join(homedir(), '.local', 'share', 'message-drop')
+}
+
+export function resolveDefaultGlobalDataPaths(): GlobalDataPaths {
+  const base = defaultGlobalDataDir()
+  return {
+    messagesFile: join(base, 'messages.json'),
+    filesDir: join(base, 'files'),
+  }
+}
+
+export interface PackagedRuntimePaths {
+  readonly runtimeRoot: string
+  readonly serverEntry: string
+}
+
+export function resolvePackagedRuntimePathsFromCli():
+  | PackagedRuntimePaths
+  | undefined {
+  const moduleDir = dirname(fileURLToPath(import.meta.url))
+  const distRoot = resolve(moduleDir, '..')
+  const runtimeRoot = join(distRoot, 'runtime')
+  const serverEntry = join(runtimeRoot, 'server', 'server.js')
+  if (!existsSync(serverEntry)) {
+    return undefined
+  }
+  return {
+    runtimeRoot,
+    serverEntry,
+  }
 }
 
 /**
@@ -60,9 +144,13 @@ export interface EffectiveServerDataPaths {
  */
 export function resolveEffectiveServerDataPaths(): EffectiveServerDataPaths {
   const repo = findMessageDropRepoRootFromCli()
+  const globalDefaults = resolveDefaultGlobalDataPaths()
   const defaultMessages =
-    repo !== undefined ? join(repo, 'data', 'messages.json') : ''
-  const defaultFiles = repo !== undefined ? join(repo, 'data', 'files') : ''
+    repo !== undefined
+      ? join(repo, 'data', 'messages.json')
+      : globalDefaults.messagesFile
+  const defaultFiles =
+    repo !== undefined ? join(repo, 'data', 'files') : globalDefaults.filesDir
 
   const envMessages = process.env.MESSAGE_DROP_DATA_PATH
   const envFiles = process.env.MESSAGE_DROP_FILES_DIR
@@ -87,12 +175,12 @@ export function resolveEffectiveServerDataPaths(): EffectiveServerDataPaths {
   }
   if (messagesFromEnv && !filesFromEnv && repo === undefined) {
     configNotes.push(
-      'MESSAGE_DROP_FILES_DIR is unset and no checkout was found — set MESSAGE_DROP_FILES_DIR to the uploads directory the server should use.',
+      `MESSAGE_DROP_FILES_DIR is unset; uploads default to ${resolveLikeRunningServer(defaultFiles, repo)} (global default). Set MESSAGE_DROP_FILES_DIR to override.`,
     )
   }
   if (!messagesFromEnv && filesFromEnv && repo === undefined) {
     configNotes.push(
-      'MESSAGE_DROP_DATA_PATH is unset and no checkout was found — set MESSAGE_DROP_DATA_PATH to the messages.json path the server should use.',
+      `MESSAGE_DROP_DATA_PATH is unset; messages default to ${resolveLikeRunningServer(defaultMessages, repo)} (global default). Set MESSAGE_DROP_DATA_PATH to override.`,
     )
   }
 

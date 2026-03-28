@@ -1,10 +1,15 @@
 /**
- * Runs the message-drop server via local tsx CLI and repository src/server.ts.
+ * Runs the message-drop server either from a local checkout (tsx + src/server.ts)
+ * or from packaged runtime assets bundled in the CLI tarball.
  */
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { findMessageDropRepoRootFromCli } from '../utils/paths.js'
+import {
+  findMessageDropRepoRootFromCli,
+  resolveDefaultGlobalDataPaths,
+  resolvePackagedRuntimePathsFromCli,
+} from '../utils/paths.js'
 
 interface ParsedStartFlags {
   host?: string
@@ -16,14 +21,40 @@ interface ParsedStartFlags {
 const MESSAGE_DROP_URL_LINE =
   /message-drop: (?<url>https?:\/\/[^\s]+)/
 
-function findMessageDropRepoRoot(): string {
-  const root = findMessageDropRepoRootFromCli()
-  if (root === undefined) {
-    throw new Error(
-      'message-drop start: could not find workspace root (expected src/server.ts next to pnpm-workspace.yaml). Run this from a full message-drop checkout.',
-    )
+interface StartExecutionTarget {
+  readonly mode: 'repo-tsx' | 'packaged-runtime'
+  readonly cwd: string
+  readonly entryOrCli: string
+  readonly serverEntry?: string
+}
+
+function resolveStartExecutionTarget(): StartExecutionTarget {
+  const runtime = resolvePackagedRuntimePathsFromCli()
+  if (runtime !== undefined) {
+    return {
+      mode: 'packaged-runtime',
+      cwd: runtime.runtimeRoot,
+      entryOrCli: runtime.serverEntry,
+    }
   }
-  return root
+
+  const repoRoot = findMessageDropRepoRootFromCli()
+  if (repoRoot !== undefined) {
+    const tsxCli = join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs')
+    const serverEntry = join(repoRoot, 'src', 'server.ts')
+    if (existsSync(tsxCli) && existsSync(serverEntry)) {
+      return {
+        mode: 'repo-tsx',
+        cwd: repoRoot,
+        entryOrCli: tsxCli,
+        serverEntry,
+      }
+    }
+  }
+
+  throw new Error(
+    'message-drop start: no runnable runtime found. Install from npm (latest) or run from a full message-drop checkout with dependencies installed.',
+  )
 }
 
 function parsePort(value: string): number {
@@ -89,7 +120,10 @@ function parseStartFlags(argv: string[]): ParsedStartFlags {
   return out
 }
 
-function buildChildEnv(flags: ParsedStartFlags): NodeJS.ProcessEnv {
+function buildChildEnv(
+  flags: ParsedStartFlags,
+  useGlobalDataDefaults: boolean,
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
   if (flags.host !== undefined) {
     env.HOST = flags.host
@@ -100,6 +134,14 @@ function buildChildEnv(flags: ParsedStartFlags): NodeJS.ProcessEnv {
   if (flags.dataDir !== undefined) {
     env.MESSAGE_DROP_DATA_PATH = join(flags.dataDir, 'messages.json')
     env.MESSAGE_DROP_FILES_DIR = join(flags.dataDir, 'files')
+  } else if (useGlobalDataDefaults) {
+    const defaults = resolveDefaultGlobalDataPaths()
+    if (env.MESSAGE_DROP_DATA_PATH === undefined) {
+      env.MESSAGE_DROP_DATA_PATH = defaults.messagesFile
+    }
+    if (env.MESSAGE_DROP_FILES_DIR === undefined) {
+      env.MESSAGE_DROP_FILES_DIR = defaults.filesDir
+    }
   }
   return env
 }
@@ -239,32 +281,29 @@ export async function runStart(args: string[]): Promise<void> {
     return
   }
 
-  const repoRoot = findMessageDropRepoRoot()
-  const tsxCli = join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs')
-  if (!existsSync(tsxCli)) {
-    console.error(
-      'message-drop start: missing node_modules/tsx/dist/cli.mjs — run pnpm install at the workspace root.',
-    )
-    process.exitCode = 1
-    return
-  }
-
-  const serverEntry = join(repoRoot, 'src', 'server.ts')
-  const childEnv = buildChildEnv(flags)
+  const target = resolveStartExecutionTarget()
+  const childEnv = buildChildEnv(
+    flags,
+    target.mode === 'packaged-runtime',
+  )
   const host = effectiveHost(flags)
   const fallbackOpenUrl = `http://${displayHostForUrl(host)}:${port}/`
 
   const wantOpenWatcher = flags.open && !isCiEnvironment()
   const spawnOpts = {
-    cwd: repoRoot,
+    cwd: target.cwd,
     env: childEnv,
   }
+  const commandArgs =
+    target.mode === 'repo-tsx'
+      ? [target.entryOrCli, target.serverEntry!]
+      : [target.entryOrCli]
   const child = wantOpenWatcher
-    ? spawn(process.execPath, [tsxCli, serverEntry], {
+    ? spawn(process.execPath, commandArgs, {
         ...spawnOpts,
         stdio: ['inherit', 'pipe', 'pipe'],
       })
-    : spawn(process.execPath, [tsxCli, serverEntry], {
+    : spawn(process.execPath, commandArgs, {
         ...spawnOpts,
         stdio: 'inherit',
       })

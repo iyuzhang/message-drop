@@ -3,7 +3,14 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  cpSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -237,6 +244,131 @@ async function verifyStartCommandReachesServer(
   await waitForProcExit(proc, 5000)
 }
 
+async function verifyStartFromSimulatedGlobalInstall(
+  root: string,
+): Promise<void> {
+  const fakePkgRoot = mkdtempSync(join(tmpdir(), 'md-cli-global-like-'))
+  const fakeDistDir = join(fakePkgRoot, 'dist')
+  cpSync(join(root, 'packages/cli/dist'), fakeDistDir, { recursive: true })
+  const realNodeModules = join(root, 'packages/cli/node_modules')
+  const fakeNodeModules = join(fakePkgRoot, 'node_modules')
+  symlinkSync(realNodeModules, fakeNodeModules, 'dir')
+  const fakeDistEntry = join(fakeDistDir, 'index.js')
+  const fakeRunDir = mkdtempSync(join(tmpdir(), 'md-cli-global-cwd-'))
+
+  const doctor = spawnSync('node', [fakeDistEntry, 'doctor'], {
+    cwd: fakeRunDir,
+    encoding: 'utf8',
+  })
+  assert(doctor.error === undefined, String(doctor.error))
+  assert(
+    doctor.status === 0,
+    `global-like dist doctor failed: status=${doctor.status} stderr=${doctor.stderr}`,
+  )
+  const doctorOut = `${doctor.stdout}\n${doctor.stderr}`
+  assert(
+    doctorOut.includes('doctor-check messages: ok'),
+    'global-like dist doctor must resolve writable messages path',
+  )
+  assert(
+    doctorOut.includes('doctor-check files: ok'),
+    'global-like dist doctor must resolve writable files path',
+  )
+
+  const port = 35_000 + Math.floor(Math.random() * 1000)
+  const proc = spawn(
+    'node',
+    [fakeDistEntry, 'start', '--port', String(port), '--host', '127.0.0.1'],
+    {
+      cwd: fakeRunDir,
+      env: { ...process.env, CI: 'true' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+
+  let buffer = ''
+  const onData = (chunk: Buffer): void => {
+    buffer += chunk.toString('utf8')
+  }
+  proc.stdout?.on('data', onData)
+  proc.stderr?.on('data', onData)
+
+  const url = await new Promise<string>((resolve, reject) => {
+    let settled = false
+    let intervalId: ReturnType<typeof setInterval> | undefined
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+
+    function finish(afterCleanup: () => void): void {
+      if (settled) {
+        return
+      }
+      settled = true
+      if (intervalId !== undefined) {
+        clearInterval(intervalId)
+        intervalId = undefined
+      }
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId)
+        timeoutId = undefined
+      }
+      proc.stdout?.off('data', onData)
+      proc.stderr?.off('data', onData)
+      proc.off('exit', onProcExit)
+      afterCleanup()
+    }
+
+    function onProcExit(
+      code: number | null,
+      signal: NodeJS.Signals | null,
+    ): void {
+      finish(() => {
+        if (signal === 'SIGTERM') {
+          reject(
+            new Error(
+              `global-like dist start received SIGTERM before URL (output=${buffer.slice(0, 400)})`,
+            ),
+          )
+          return
+        }
+        reject(
+          new Error(
+            `global-like dist start exited before URL (code=${code} signal=${signal}) output=${buffer.slice(0, 800)}`,
+          ),
+        )
+      })
+    }
+
+    intervalId = setInterval(() => {
+      const m = buffer.match(/message-drop: (http:\/\/[^\s]+)/)
+      if (m) {
+        finish(() => {
+          resolve(m[1]!)
+        })
+      }
+    }, 50)
+
+    timeoutId = setTimeout(() => {
+      finish(() => {
+        proc.kill('SIGTERM')
+        reject(new Error('global-like dist start timeout waiting for URL'))
+      })
+    }, 20_000)
+
+    proc.once('exit', onProcExit)
+  })
+
+  assert(
+    url.includes(`:${port}/`) || url.includes(`:${port}`),
+    `global-like dist URL must include chosen port ${port}`,
+  )
+
+  const res = await fetchWithRetry(url)
+  assert(res.ok, `global-like dist GET ${url} expected ok, got ${res.status}`)
+
+  proc.kill('SIGTERM')
+  await waitForProcExit(proc, 5000)
+}
+
 async function mainAsync(): Promise<void> {
   const root = repoRoot()
   const pkgPath = join(root, 'packages/cli/package.json')
@@ -443,6 +575,8 @@ async function mainAsync(): Promise<void> {
   await verifyStartCommandReachesServer(root, 'node dist start', 'node', [
     distEntry,
   ])
+
+  await verifyStartFromSimulatedGlobalInstall(root)
 
   const autostartHelpTsx = spawnSync(
     'pnpm',

@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
+    "message-drop": "tsx packages/cli/src/index.ts",
     "verify:phase1": "tsx scripts/verify-phase1.ts",
     "verify:phase2": "tsx scripts/verify-phase2.ts",
     "verify:phase3": "tsx scripts/verify-phase3.ts && pnpm --dir web run build",
