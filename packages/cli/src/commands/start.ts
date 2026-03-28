@@ -80,7 +80,7 @@ function parsePort(value: string): number {
 }
 
 function parseStartFlags(argv: string[]): ParsedStartFlags {
-  const out: ParsedStartFlags = { open: false, foreground: false }
+  const out: ParsedStartFlags = { open: true, foreground: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === undefined) {
@@ -199,7 +199,7 @@ Options:
   --port <port>       Listen port (default: PORT env or 8787)
   --data-dir <dir>    Store messages.json and files/ under this directory
                       (overrides MESSAGE_DROP_DATA_PATH / MESSAGE_DROP_FILES_DIR)
-  --open              Open the server URL in a browser (skipped when CI is set; best-effort)
+  --open              Open the server URL in a browser (default; skipped when CI is set; best-effort)
   --foreground        Keep process attached in foreground (debug/advanced)
   -h, --help          Show help`)
 }
