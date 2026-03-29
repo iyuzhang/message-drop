@@ -86,6 +86,7 @@ pnpm --dir web run build
 | Other devices cannot reach the server | Ensure the server listens on `0.0.0.0` and your firewall allows `PORT` (default 8787). |
 | Android keeps showing `Waiting for server` | 1) Ensure the host server is running. 2) Ensure phone and host are on the same LAN. 3) Check whether router blocks mDNS/UDP broadcast. |
 | Discovery is unstable | Long-press the top status bar in Android app, then manually enter host IP and port. Run `message-drop doctor` on host to view usable IPs. |
+| Connection/discovery breaks under VPN | Some VPN clients (especially `TUN` mode) may hijack routes or block LAN broadcast/mDNS. Try disabling VPN, switching to system-proxy mode, or adding LAN bypass/split-tunnel rules. |
 
 *Optional real-device smoke test for developers:*
 
