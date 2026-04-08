@@ -16,6 +16,7 @@ pnpm add -g message-drop
 message-drop start
 message-drop status
 message-drop stop
+message-drop auth reset
 message-drop doctor
 message-drop autostart enable
 ```

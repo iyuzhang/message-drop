@@ -210,11 +210,31 @@
   padding-right: var(--space-3);
 }
 
+.composer-drop-active {
+  border-top-color: var(--accent-border);
+  box-shadow:
+    0 -4px 20px rgba(0, 0, 0, 0.05),
+    inset 0 0 0 1px var(--accent-border);
+}
+
 .composer-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+}
+
+.composer-drop-hint {
+  border: 1px dashed var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-bg);
+  color: var(--accent);
+  min-height: var(--touch-target-min);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  font-weight: 600;
 }
 
 .composer-toolbar .ghost {

@@ -62,6 +62,7 @@ Other useful commands:
 message-drop doctor           # Diagnostics and path info
 message-drop status           # Check background daemon status
 message-drop stop             # Stop background daemon
+message-drop auth reset       # Reset persisted server password (auth.json)
 message-drop autostart enable # Enable auto-start (Linux systemd / Windows startup)
 ```
 

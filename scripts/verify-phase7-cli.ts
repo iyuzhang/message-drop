@@ -7,6 +7,7 @@ import {
   chmodSync,
   cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -17,7 +18,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const REQUIRED_COMMANDS = ['start', 'status', 'stop', 'autostart', 'doctor'] as const
+const REQUIRED_COMMANDS = ['start', 'status', 'stop', 'autostart', 'doctor', 'auth'] as const
 
 const START_HELP_FLAGS = [
   '--host',
@@ -451,6 +452,7 @@ async function mainAsync(): Promise<void> {
   const pkgPath = join(root, 'packages/cli/package.json')
   const tsconfigPath = join(root, 'packages/cli/tsconfig.json')
   const cliEntry = join(root, 'packages/cli/src/index.ts')
+  const tsxCli = join(root, 'node_modules', 'tsx', 'dist', 'cli.mjs')
   const distEntry = join(root, 'packages/cli/dist/index.js')
 
   const pkg = readJson<CliPackageJson>(pkgPath)
@@ -539,6 +541,113 @@ async function mainAsync(): Promise<void> {
     doctorHelpOut.toLowerCase().includes('exit'),
     'tsx doctor --help must mention exit code behavior',
   )
+
+  const authHelpTsx = spawnSync(
+    'pnpm',
+    ['exec', 'tsx', cliEntry, 'auth', '--help'],
+    {
+      cwd: root,
+      encoding: 'utf8',
+    },
+  )
+  assert(authHelpTsx.error === undefined, String(authHelpTsx.error))
+  assert(
+    authHelpTsx.status === 0,
+    `tsx auth --help failed: status=${authHelpTsx.status} stderr=${authHelpTsx.stderr}`,
+  )
+  const authHelpOut = `${authHelpTsx.stdout}\n${authHelpTsx.stderr}`
+  assert(
+    authHelpOut.includes('reset'),
+    'tsx auth --help must mention reset subcommand',
+  )
+  const authResetHelpTsx = spawnSync(
+    'pnpm',
+    ['exec', 'tsx', cliEntry, 'auth', 'reset', '--help'],
+    {
+      cwd: root,
+      encoding: 'utf8',
+    },
+  )
+  assert(authResetHelpTsx.error === undefined, String(authResetHelpTsx.error))
+  assert(
+    authResetHelpTsx.status === 0,
+    `tsx auth reset --help failed: status=${authResetHelpTsx.status} stderr=${authResetHelpTsx.stderr}`,
+  )
+  const authResetHelpOut = `${authResetHelpTsx.stdout}\n${authResetHelpTsx.stderr}`
+  assert(
+    authResetHelpOut.includes('Usage: message-drop auth reset'),
+    'tsx auth reset --help must print reset-specific usage',
+  )
+
+  const authDataDir = mkdtempSync(join(tmpdir(), 'md-auth-reset-'))
+  const authFile = join(authDataDir, 'auth.json')
+  writeFileSync(
+    authFile,
+    JSON.stringify(
+      {
+        password_hash: 'scrypt$16384$8$1$dummy$dummy',
+        version: 1,
+        updated_at: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  )
+  const authResetTsx = spawnSync(
+    'pnpm',
+    ['exec', 'tsx', cliEntry, 'auth', 'reset', '--data-dir', authDataDir],
+    {
+      cwd: root,
+      encoding: 'utf8',
+    },
+  )
+  assert(authResetTsx.error === undefined, String(authResetTsx.error))
+  assert(
+    authResetTsx.status === 0,
+    `tsx auth reset failed: status=${authResetTsx.status} stderr=${authResetTsx.stderr}`,
+  )
+  assert(
+    !existsSync(authFile),
+    'tsx auth reset must delete auth.json in provided data dir',
+  )
+  const relDirName = `md-auth-reset-rel-${Date.now()}`
+  const relDataDir = join(root, relDirName)
+  const relAuthFile = join(relDataDir, 'auth.json')
+  rmSync(relDataDir, { recursive: true, force: true })
+  mkdirSync(relDataDir, { recursive: true })
+  writeFileSync(
+    relAuthFile,
+    JSON.stringify(
+      {
+        password_hash: 'scrypt$16384$8$1$dummy$dummy',
+        version: 2,
+        updated_at: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  )
+  const nonRepoCwd = mkdtempSync(join(tmpdir(), 'md-auth-reset-cwd-'))
+  const authResetRelTsx = spawnSync(
+    'node',
+    [tsxCli, cliEntry, 'auth', 'reset', '--data-dir', relDirName],
+    {
+      cwd: nonRepoCwd,
+      encoding: 'utf8',
+    },
+  )
+  assert(authResetRelTsx.error === undefined, String(authResetRelTsx.error))
+  assert(
+    authResetRelTsx.status === 0,
+    `tsx auth reset relative --data-dir failed: status=${authResetRelTsx.status} stderr=${authResetRelTsx.stderr}`,
+  )
+  assert(
+    !existsSync(relAuthFile),
+    'tsx auth reset with relative --data-dir must resolve like start command base dir',
+  )
+  rmSync(relDataDir, { recursive: true, force: true })
 
   const doctorTsx = spawnSync(
     'pnpm',

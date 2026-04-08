@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { runAutostart } from './commands/autostart.js'
+import { runAuth } from './commands/auth.js'
 import { runDoctor } from './commands/doctor.js'
 import { runStart } from './commands/start.js'
 import { runStatus } from './commands/status.js'
@@ -11,6 +12,7 @@ Commands:
   start       Run the HTTP server
   status      Show background daemon status
   stop        Stop the background daemon
+  auth        Show or manage authentication (see auth --help)
   autostart   Show or manage autostart (see autostart --help)
   doctor      Diagnose environment for install/start
 
@@ -24,6 +26,7 @@ const ROUTER: Record<string, CommandRunner> = {
   start: runStart,
   status: runStatus,
   stop: runStop,
+  auth: runAuth,
   autostart: runAutostart,
   doctor: runDoctor,
 }

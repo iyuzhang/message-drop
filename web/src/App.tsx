@@ -17,6 +17,19 @@ import './App.css'
 
 type AttachmentKind = 'file' | 'image'
 
+function hasDraggedFiles(event: React.DragEvent<HTMLElement>): boolean {
+  return hasFileDataTransfer(event.dataTransfer)
+}
+
+function hasFileDataTransfer(dataTransfer: DataTransfer | null): boolean {
+  if (dataTransfer === null) return false
+  return Array.from(dataTransfer.types).includes('Files')
+}
+
+function inferAttachmentKind(file: File): AttachmentKind {
+  return file.type.startsWith('image/') ? 'image' : 'file'
+}
+
 export default function App() {
   const apiBase = getApiBase()
   const isAndroidWebView = typeof window !== 'undefined' && !!window.MessageDropAndroid
@@ -42,6 +55,7 @@ export default function App() {
   )
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [draggingFile, setDraggingFile] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null)
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false)
@@ -104,6 +118,7 @@ export default function App() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
+  const dragDepthRef = useRef(0)
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -115,6 +130,19 @@ export default function App() {
       setAppUpdate(info)
     })
     return () => ac.abort()
+  }, [])
+
+  useEffect(() => {
+    const preventFileDropNavigation = (event: DragEvent) => {
+      if (!hasFileDataTransfer(event.dataTransfer)) return
+      event.preventDefault()
+    }
+    window.addEventListener('dragover', preventFileDropNavigation)
+    window.addEventListener('drop', preventFileDropNavigation)
+    return () => {
+      window.removeEventListener('dragover', preventFileDropNavigation)
+      window.removeEventListener('drop', preventFileDropNavigation)
+    }
   }, [])
 
   useEffect(() => {
@@ -296,6 +324,41 @@ export default function App() {
     }
   }, [authPasswordInput, authPrompt, apiBase, persistToken])
 
+  const onComposerDragEnter = useCallback((e: React.DragEvent<HTMLElement>) => {
+    if (!hasDraggedFiles(e)) return
+    e.preventDefault()
+    dragDepthRef.current += 1
+    setDraggingFile(true)
+  }, [])
+
+  const onComposerDragOver = useCallback((e: React.DragEvent<HTMLElement>) => {
+    if (!hasDraggedFiles(e)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  const onComposerDragLeave = useCallback((e: React.DragEvent<HTMLElement>) => {
+    if (!hasDraggedFiles(e)) return
+    e.preventDefault()
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) {
+      setDraggingFile(false)
+    }
+  }, [])
+
+  const onComposerDrop = useCallback(
+    (e: React.DragEvent<HTMLElement>) => {
+      if (!hasDraggedFiles(e)) return
+      e.preventDefault()
+      dragDepthRef.current = 0
+      setDraggingFile(false)
+      const file = e.dataTransfer.files?.[0] ?? null
+      if (!file) return
+      onSelectAttachment(file, inferAttachmentKind(file))
+    },
+    [onSelectAttachment],
+  )
+
   if (fatalError) {
     return (
       <div className="app">
@@ -457,7 +520,13 @@ export default function App() {
         )}
       </main>
 
-      <footer className="composer">
+      <footer
+        className={`composer${draggingFile ? ' composer-drop-active' : ''}`}
+        onDragEnter={onComposerDragEnter}
+        onDragOver={onComposerDragOver}
+        onDragLeave={onComposerDragLeave}
+        onDrop={onComposerDrop}
+      >
         <div
           className="composer-toolbar"
           role="group"
@@ -506,6 +575,12 @@ export default function App() {
             File
           </button>
         </div>
+
+        {draggingFile ? (
+          <div className="composer-drop-hint" role="status" aria-live="polite">
+            Drop file here to attach
+          </div>
+        ) : null}
 
         {attachment ? (
           <div
