@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  ApiError,
   checkForAppUpdate,
+  fetchAuthStatus,
   fetchMessages,
   getApiBase,
+  loginWithPassword,
   postTextMessage,
+  setupServerPassword,
   unlockMessage,
   uploadBlob,
 } from './api'
@@ -16,7 +20,19 @@ type AttachmentKind = 'file' | 'image'
 export default function App() {
   const apiBase = getApiBase()
   const isAndroidWebView = typeof window !== 'undefined' && !!window.MessageDropAndroid
-  const { messages, conn, mergeFromServer, upsert } = useMessagePool(apiBase)
+  const [authToken, setAuthToken] = useState<string | null>(null)
+  const [authEnabled, setAuthEnabled] = useState(false)
+  const [authManagedByEnv, setAuthManagedByEnv] = useState(false)
+  const [authChecking, setAuthChecking] = useState(true)
+  const [authPasswordInput, setAuthPasswordInput] = useState('')
+  const [authPrompt, setAuthPrompt] = useState<'none' | 'login' | 'setup'>('none')
+  const [authBusy, setAuthBusy] = useState(false)
+  const {
+    messages,
+    conn,
+    mergeFromServer,
+    upsert,
+  } = useMessagePool(apiBase, authToken, authChecking || (authEnabled && authToken === null))
   const [text, setText] = useState('')
   const [usePin, setUsePin] = useState(false)
   const [pin, setPin] = useState('')
@@ -30,6 +46,61 @@ export default function App() {
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null)
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false)
   const [fatalError, setFatalError] = useState<string | null>(null)
+  const tokenStorageKey = `message_drop_auth_token:${apiBase}`
+
+  const persistToken = useCallback(
+    (token: string | null) => {
+      setAuthToken(token)
+      if (token === null) {
+        localStorage.removeItem(tokenStorageKey)
+      } else {
+        localStorage.setItem(tokenStorageKey, token)
+      }
+    },
+    [tokenStorageKey],
+  )
+
+  useEffect(() => {
+    const cached = localStorage.getItem(tokenStorageKey)
+    if (cached !== null && cached !== '') {
+      setAuthToken(cached)
+    }
+  }, [tokenStorageKey])
+
+  useEffect(() => {
+    const run = async () => {
+      setAuthChecking(true)
+      try {
+        const s = await fetchAuthStatus(apiBase)
+        setAuthEnabled(s.enabled)
+        setAuthManagedByEnv(s.managed_by_env)
+        if (s.enabled && authToken === null) {
+          setAuthPrompt('login')
+        } else {
+          setAuthPrompt('none')
+        }
+      } catch {
+        // Keep legacy behavior when auth status endpoint is unreachable.
+        setAuthEnabled(false)
+        setAuthManagedByEnv(false)
+        setAuthPrompt('none')
+      } finally {
+        setAuthChecking(false)
+      }
+    }
+    void run()
+  }, [apiBase, authToken])
+
+  const ensureAuthorized = useCallback((e: unknown): boolean => {
+    if (e instanceof ApiError && e.status === 401) {
+      persistToken(null)
+      setAuthPrompt('login')
+      setError('AUTH_REQUIRED')
+      return true
+    }
+    return false
+  }, [persistToken])
+
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -137,9 +208,9 @@ export default function App() {
         return
       }
       if (attachment) {
-        const { url } = await uploadBlob(apiBase, attachment)
+        const { url } = await uploadBlob(apiBase, authToken, attachment)
         const caption = content || attachment.name
-        await postTextMessage(apiBase, {
+        await postTextMessage(apiBase, authToken, {
           type: 'file',
           content: caption,
           file_url: url,
@@ -148,7 +219,7 @@ export default function App() {
         })
         clearAttachment()
       } else {
-        await postTextMessage(apiBase, {
+        await postTextMessage(apiBase, authToken, {
           content,
           has_pin: usePin,
           pin: usePin ? pin : undefined,
@@ -160,11 +231,12 @@ export default function App() {
       }
       if (usePin) setPin('')
     } catch (e) {
+      if (ensureAuthorized(e)) return
       setError(e instanceof Error ? e.message : 'SEND_FAILED')
     } finally {
       setSending(false)
     }
-  }, [apiBase, text, usePin, pin, attachment, clearAttachment])
+  }, [apiBase, text, usePin, pin, attachment, clearAttachment, authToken, ensureAuthorized])
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -178,9 +250,10 @@ export default function App() {
     if (p === null) return
     setError(null)
     try {
-      const revealed = await unlockMessage(apiBase, id, p)
+      const revealed = await unlockMessage(apiBase, authToken, id, p)
       upsert(revealed)
-    } catch {
+    } catch (e) {
+      if (ensureAuthorized(e)) return
       setError('UNLOCK_FAILED')
     }
   }
@@ -188,12 +261,40 @@ export default function App() {
   const refresh = async () => {
     setError(null)
     try {
-      const list = await fetchMessages(apiBase)
+      const list = await fetchMessages(apiBase, authToken)
       mergeFromServer(list)
-    } catch {
+    } catch (e) {
+      if (ensureAuthorized(e)) return
       setError('REFRESH_FAILED')
     }
   }
+
+  const submitAuth = useCallback(async () => {
+    const password = authPasswordInput.trim()
+    if (authPrompt === 'setup' && password.length < 4) {
+      setError('PASSWORD_TOO_SHORT')
+      return
+    }
+    setAuthBusy(true)
+    setError(null)
+    try {
+      if (authPrompt === 'setup') {
+        const result = await setupServerPassword(apiBase, password)
+        persistToken(result.token)
+        setAuthEnabled(true)
+        setAuthPrompt('none')
+      } else {
+        const result = await loginWithPassword(apiBase, password)
+        persistToken(result.token)
+        setAuthPrompt('none')
+      }
+      setAuthPasswordInput('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'AUTH_FAILED')
+    } finally {
+      setAuthBusy(false)
+    }
+  }, [authPasswordInput, authPrompt, apiBase, persistToken])
 
   if (fatalError) {
     return (
@@ -226,6 +327,16 @@ export default function App() {
       <header className="bar">
         <span className="title">Message Drop</span>
         <span className={`conn conn-${conn}`}>{conn}</span>
+        {!authEnabled ? (
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => setAuthPrompt('setup')}
+            style={{ border: 'none', background: 'var(--code-bg)' }}
+          >
+            Set Password
+          </button>
+        ) : null}
         <button
           type="button"
           className="ghost"
@@ -265,6 +376,34 @@ export default function App() {
       ) : null}
 
       {error ? <div className="err">{error}</div> : null}
+
+      {authPrompt !== 'none' ? (
+        <div className="err" role="alert" style={{ display: 'grid', gap: '8px' }}>
+          <strong>{authPrompt === 'setup' ? 'Set server password' : 'Enter connection password'}</strong>
+          {authManagedByEnv && authPrompt === 'setup' ? (
+            <span>Password is managed by server environment variable.</span>
+          ) : (
+            <>
+              <input
+                className="field"
+                type="password"
+                value={authPasswordInput}
+                onChange={(e) => setAuthPasswordInput(e.target.value)}
+                placeholder="Connection password"
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                className="send"
+                onClick={() => void submitAuth()}
+                disabled={authBusy}
+              >
+                {authBusy ? 'Please wait…' : authPrompt === 'setup' ? 'Enable Password' : 'Connect'}
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
 
       <main className="main">
         {messages.length === 0 ? (

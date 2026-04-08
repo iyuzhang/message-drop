@@ -54,6 +54,16 @@ message-drop stop             # 停止后台守护进程
 message-drop autostart enable # 设置开机自启 (支持 Linux systemd / Windows 启动项)
 ```
 
+### 连接密码（可选）
+
+- 服务端密码可通过两种方式设置：
+  - 环境变量 `MESSAGE_DROP_SERVER_PASSWORD`（优先级最高）
+  - Web/移动端首轮连接时使用 `Set Password` 初始化，并持久化到服务端数据目录的 `auth.json`
+- 启用密码后，客户端需先登录一次，之后复用令牌连接。
+- 令牌有效期可通过 `MESSAGE_DROP_AUTH_TOKEN_TTL` 配置：
+  - 默认：`never`
+  - 示例：`12h`、`30d`、`3600s`
+
 ### 4. 开发模式（源码仓库）
 
 ```bash

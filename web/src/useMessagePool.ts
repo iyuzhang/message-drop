@@ -8,7 +8,11 @@ function sortMessages(map: Map<string, PoolMessage>): PoolMessage[] {
   return [...map.values()].sort((a, b) => a.timestamp - b.timestamp)
 }
 
-export function useMessagePool(apiBase: string) {
+export function useMessagePool(
+  apiBase: string,
+  token: string | null,
+  paused: boolean,
+) {
   const [messages, setMessages] = useState<PoolMessage[]>([])
   const [conn, setConn] = useState<ConnState>('connecting')
   const mapRef = useRef(new Map<string, PoolMessage>())
@@ -28,6 +32,10 @@ export function useMessagePool(apiBase: string) {
   }, [])
 
   useEffect(() => {
+    if (paused) {
+      setConn('connecting')
+      return
+    }
     let ws: WebSocket | null = null
     let cancelled = false
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
@@ -50,7 +58,11 @@ export function useMessagePool(apiBase: string) {
     const connect = () => {
       if (cancelled) return
       setConn((c) => (c === 'live' ? c : 'connecting'))
-      const url = wsUrlFromApiBase(apiBase)
+      const urlObj = new URL(wsUrlFromApiBase(apiBase))
+      if (token !== null) {
+        urlObj.searchParams.set('token', token)
+      }
+      const url = urlObj.toString()
       ws = new WebSocket(url)
 
       ws.onopen = () => {
@@ -94,7 +106,7 @@ export function useMessagePool(apiBase: string) {
       clearTimer()
       ws?.close()
     }
-  }, [apiBase, applySnapshot, upsert])
+  }, [apiBase, applySnapshot, upsert, token, paused])
 
   const mergeFromServer = useCallback((list: PoolMessage[]) => {
     const m = mapRef.current

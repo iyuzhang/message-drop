@@ -65,6 +65,16 @@ message-drop stop             # Stop background daemon
 message-drop autostart enable # Enable auto-start (Linux systemd / Windows startup)
 ```
 
+### Connection Password (Optional)
+
+- Server-side password can be configured in two ways:
+  - `MESSAGE_DROP_SERVER_PASSWORD` environment variable (highest priority)
+  - first-time setup from the web/mobile UI (`Set Password`), persisted in server data dir (`auth.json`)
+- When password is enabled, clients must login once and then reuse a token.
+- Token TTL is configurable via `MESSAGE_DROP_AUTH_TOKEN_TTL`:
+  - default: `never`
+  - examples: `12h`, `30d`, `3600s`
+
 ### 4. Development Mode (from source checkout)
 
 ```bash

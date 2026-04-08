@@ -23,9 +23,10 @@
     "verify:phase9-open-source": "tsx scripts/verify-phase9-open-source.ts",
     "verify:phase10-release-workflow": "tsx scripts/verify-phase10-release-workflow.ts",
     "verify:phase11-windows-installer": "tsx scripts/verify-phase11-windows-installer.ts",
+    "verify:phase12-auth": "tsx scripts/verify-phase12-auth.ts",
     "build:windows-agent": "pnpm --dir packages/windows-agent run dist:win",
     "verify:adb-smoke": "bash scripts/verify-adb-smoke.sh",
-    "verify:all": "pnpm run verify:phase1 && pnpm run verify:phase2 && pnpm run verify:phase3 && pnpm run verify:phase4 && pnpm run verify:phase5 && pnpm run verify:phase6 && pnpm run verify:phase7-cli && pnpm run verify:phase8-release-check && pnpm run verify:phase9-open-source && pnpm run verify:phase10-release-workflow && pnpm run verify:phase11-windows-installer"
+    "verify:all": "pnpm run verify:phase1 && pnpm run verify:phase2 && pnpm run verify:phase3 && pnpm run verify:phase4 && pnpm run verify:phase5 && pnpm run verify:phase6 && pnpm run verify:phase7-cli && pnpm run verify:phase8-release-check && pnpm run verify:phase9-open-source && pnpm run verify:phase10-release-workflow && pnpm run verify:phase11-windows-installer && pnpm run verify:phase12-auth"
   },
   "keywords": [],
   "author": "",

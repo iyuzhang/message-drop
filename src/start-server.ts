@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path'
 import { serve } from '@hono/node-server'
 import { WebSocket, WebSocketServer } from 'ws'
 import { createMessageApp } from './app.js'
+import { AuthManager } from './auth.js'
 import { startLanDiscovery, type DiscoveryHandle } from './discovery.js'
 import { FileStore } from './file-store.js'
 import { toClientMessage } from './sanitize.js'
@@ -15,6 +16,9 @@ export interface MessageDropServerConfig {
   port: number
   dataPath: string
   filesPath: string
+  authFilePath: string
+  authPassword: string | undefined
+  authTokenTtl: string | undefined
 }
 
 function defaultDataRoot(): string {
@@ -32,13 +36,14 @@ export function resolveMessageDropServerConfigFromEnv(): MessageDropServerConfig
   const port = parseListenPort(process.env.PORT, 8787)
   const host = process.env.HOST ?? '0.0.0.0'
   const dataRoot = defaultDataRoot()
-  const dataPath =
-    process.env.MESSAGE_DROP_DATA_PATH ??
-    join(dataRoot, 'messages.json')
+  const dataPath = process.env.MESSAGE_DROP_DATA_PATH ?? join(dataRoot, 'messages.json')
   const filesPath =
     process.env.MESSAGE_DROP_FILES_DIR ??
     join(dataRoot, 'files')
-  return { host, port, dataPath, filesPath }
+  const authFilePath = join(dirname(dataPath), 'auth.json')
+  const authPassword = process.env.MESSAGE_DROP_SERVER_PASSWORD
+  const authTokenTtl = process.env.MESSAGE_DROP_AUTH_TOKEN_TTL
+  return { host, port, dataPath, filesPath, authFilePath, authPassword, authTokenTtl }
 }
 
 /**
@@ -47,11 +52,17 @@ export function resolveMessageDropServerConfigFromEnv(): MessageDropServerConfig
 export function startMessageDropServer(config: MessageDropServerConfig): void {
   const store = new MessageStore(config.dataPath)
   const fileStore = new FileStore(config.filesPath)
+  const auth = new AuthManager(
+    config.authFilePath,
+    config.authPassword,
+    config.authTokenTtl,
+  )
 
   let pushNewMessage: (msg: PoolMessage) => void = () => {}
 
   const app = createMessageApp(store, {
     fileStore,
+    authManager: auth,
     onMessageCreated: (msg) => pushNewMessage(msg),
   })
 
@@ -87,7 +98,16 @@ export function startMessageDropServer(config: MessageDropServerConfig): void {
 
   const wss = new WebSocketServer({ server: server as Server, path: '/ws' })
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
+    if (auth.status().enabled) {
+      const host = req.headers.host ?? 'localhost'
+      const reqUrl = new URL(req.url ?? '/ws', `http://${host}`)
+      const token = reqUrl.searchParams.get('token')
+      if (token === null || !auth.verifyToken(token)) {
+        ws.close(4401, 'unauthorized')
+        return
+      }
+    }
     console.log('[ws] connection open')
     telemetry.wsConnections++
     clients.add(ws)

@@ -2,6 +2,8 @@ import { Readable } from 'node:stream'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { serveStatic } from '@hono/node-server/serve-static'
+import type { AuthManager } from './auth.js'
+import { extractBearerToken } from './auth.js'
 import type { FileStore } from './file-store.js'
 import { toClientMessage, toRevealedClientMessage } from './sanitize.js'
 import type { MessageStore } from './store.js'
@@ -11,6 +13,7 @@ import type { CreateMessageBody, MessageType, PoolMessage } from './types.js'
 export interface MessageAppOptions {
   onMessageCreated?: (msg: PoolMessage) => void
   fileStore?: FileStore
+  authManager?: AuthManager
 }
 
 export function createMessageApp(
@@ -18,13 +21,16 @@ export function createMessageApp(
   opts: MessageAppOptions = {},
 ): Hono {
   const app = new Hono()
+  const loginWindowMs = 60_000
+  const loginLimit = 10
+  const loginAttempts = new Map<string, { count: number; windowStart: number }>()
 
   app.use(
     '*',
     cors({
       origin: '*',
       allowMethods: ['GET', 'POST', 'OPTIONS'],
-      allowHeaders: ['Content-Type'],
+      allowHeaders: ['Content-Type', 'Authorization'],
     }),
   )
 
@@ -49,6 +55,135 @@ export function createMessageApp(
     return c.html(
       `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>Message Drop Debug</title></head><body><pre style="white-space:pre-wrap;font:14px ui-monospace,monospace">${safe}</pre></body></html>`,
     )
+  })
+
+  app.use('/api/*', async (c, next) => {
+    const path = c.req.path
+    const publicPaths = new Set(['/api/auth/status', '/api/auth/login', '/api/auth/setup'])
+    const auth = opts.authManager
+    if (auth === undefined || !auth.status().enabled || publicPaths.has(path)) {
+      await next()
+      return
+    }
+    const token = extractBearerToken(c.req.header('Authorization'))
+    if (token === null || !auth.verifyToken(token)) {
+      return c.json({ error: 'UNAUTHORIZED' }, 401)
+    }
+    await next()
+  })
+
+  app.get('/api/auth/status', (c) => {
+    const auth = opts.authManager
+    const s = auth?.status() ?? { enabled: false, managedByEnv: false }
+    return c.json({
+      enabled: s.enabled,
+      managed_by_env: s.managedByEnv,
+    })
+  })
+
+  app.post('/api/auth/login', async (c) => {
+    const auth = opts.authManager
+    if (auth === undefined || !auth.status().enabled) {
+      return c.json({ error: 'AUTH_DISABLED' }, 400)
+    }
+    const clientIp = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
+    const now = Date.now()
+    const current = loginAttempts.get(clientIp)
+    if (current !== undefined && now - current.windowStart < loginWindowMs) {
+      if (current.count >= loginLimit) {
+        return c.json({ error: 'TOO_MANY_ATTEMPTS' }, 429)
+      }
+      current.count += 1
+    } else {
+      loginAttempts.set(clientIp, { count: 1, windowStart: now })
+    }
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: 'INVALID_JSON' }, 400)
+    }
+    const o = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : null
+    const password = typeof o?.password === 'string' ? o.password : ''
+    const result = auth.login(password)
+    if (result === null) {
+      return c.json({ error: 'INVALID_PASSWORD' }, 401)
+    }
+    loginAttempts.delete(clientIp)
+    return c.json({
+      token: result.token,
+      expires_at: result.expiresAt,
+    })
+  })
+
+  app.post('/api/auth/setup', async (c) => {
+    const auth = opts.authManager
+    if (auth === undefined) {
+      return c.json({ error: 'AUTH_UNAVAILABLE' }, 400)
+    }
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: 'INVALID_JSON' }, 400)
+    }
+    const o = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : null
+    const password = typeof o?.password === 'string' ? o.password : ''
+    try {
+      const result = auth.setupPassword(password)
+      if (result === 'ALREADY_CONFIGURED') {
+        return c.json({ error: 'PASSWORD_ALREADY_CONFIGURED' }, 409)
+      }
+      if (result === 'MANAGED_BY_ENV') {
+        return c.json({ error: 'PASSWORD_MANAGED_BY_ENV' }, 409)
+      }
+      return c.json({
+        token: result.token,
+        expires_at: result.expiresAt,
+      })
+    } catch (e) {
+      if (e instanceof Error && e.message === 'PASSWORD_TOO_SHORT') {
+        return c.json({ error: 'PASSWORD_TOO_SHORT' }, 400)
+      }
+      throw e
+    }
+  })
+
+  app.post('/api/auth/change', async (c) => {
+    const auth = opts.authManager
+    if (auth === undefined) {
+      return c.json({ error: 'AUTH_UNAVAILABLE' }, 400)
+    }
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: 'INVALID_JSON' }, 400)
+    }
+    const o = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : null
+    const oldPassword = typeof o?.old_password === 'string' ? o.old_password : ''
+    const newPassword = typeof o?.new_password === 'string' ? o.new_password : ''
+    try {
+      const result = auth.changePassword(oldPassword, newPassword)
+      if (result === 'AUTH_DISABLED') {
+        return c.json({ error: 'AUTH_DISABLED' }, 400)
+      }
+      if (result === 'INVALID_PASSWORD') {
+        return c.json({ error: 'INVALID_PASSWORD' }, 401)
+      }
+      if (result === 'MANAGED_BY_ENV') {
+        return c.json({ error: 'PASSWORD_MANAGED_BY_ENV' }, 409)
+      }
+      return c.json({
+        token: result.token,
+        expires_at: result.expiresAt,
+      })
+    } catch (e) {
+      if (e instanceof Error && e.message === 'PASSWORD_TOO_SHORT') {
+        return c.json({ error: 'PASSWORD_TOO_SHORT' }, 400)
+      }
+      throw e
+    }
   })
 
   app.get('/api/messages', async (c) => {
