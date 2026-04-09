@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import QRCode from 'qrcode'
 import {
   ApiError,
   checkForAppUpdate,
+  consumeQrTicket,
+  createQrTicket,
   fetchAuthStatus,
+  fetchServerEntrypoints,
   fetchMessages,
   getApiBase,
   loginWithPassword,
@@ -16,6 +20,12 @@ import type { AppUpdateInfo } from './types'
 import './App.css'
 
 type AttachmentKind = 'file' | 'image'
+interface AttachmentItem {
+  id: string
+  file: File
+  kind: AttachmentKind
+  imagePreviewUrl: string | null
+}
 
 function hasDraggedFiles(event: React.DragEvent<HTMLElement>): boolean {
   return hasFileDataTransfer(event.dataTransfer)
@@ -49,17 +59,18 @@ export default function App() {
   const [text, setText] = useState('')
   const [usePin, setUsePin] = useState(false)
   const [pin, setPin] = useState('')
-  const [attachment, setAttachment] = useState<File | null>(null)
-  const [attachmentKind, setAttachmentKind] = useState<AttachmentKind | null>(
-    null,
-  )
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([])
   const [sending, setSending] = useState(false)
   const [draggingFile, setDraggingFile] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null)
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false)
   const [fatalError, setFatalError] = useState<string | null>(null)
+  const [qrOpen, setQrOpen] = useState(false)
+  const [qrBusy, setQrBusy] = useState(false)
+  const [qrImageUrl, setQrImageUrl] = useState<string | null>(null)
+  const [qrTargetUrl, setQrTargetUrl] = useState<string>('')
+  const [qrError, setQrError] = useState<string | null>(null)
   const tokenStorageKey = `message_drop_auth_token:${apiBase}`
 
   const persistToken = useCallback(
@@ -80,6 +91,25 @@ export default function App() {
       setAuthToken(cached)
     }
   }, [tokenStorageKey])
+
+  useEffect(() => {
+    const run = async () => {
+      const ticket = new URLSearchParams(window.location.search).get('qr_ticket')
+      if (ticket === null || ticket === '') return
+      try {
+        const result = await consumeQrTicket(apiBase, ticket)
+        persistToken(result.token)
+        const current = new URL(window.location.href)
+        current.searchParams.delete('qr_ticket')
+        const nextSearch = current.searchParams.toString()
+        const nextUrl = `${current.pathname}${nextSearch === '' ? '' : `?${nextSearch}`}${current.hash}`
+        window.history.replaceState({}, '', nextUrl)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'QR_TICKET_CONSUME_FAILED')
+      }
+    }
+    void run()
+  }, [apiBase, persistToken])
 
   useEffect(() => {
     const run = async () => {
@@ -115,14 +145,46 @@ export default function App() {
     return false
   }, [persistToken])
 
+  const buildDownloadHref = useCallback((fileUrl: string): string => {
+    if (authToken === null || authToken === '') return fileUrl
+    const base = apiBase.endsWith('/') ? apiBase : `${apiBase}/`
+    const u = new URL(fileUrl, base)
+    u.searchParams.set('token', authToken)
+    return `${u.pathname}${u.search}${u.hash}`
+  }, [apiBase, authToken])
+
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
+  const messageViewportRef = useRef<HTMLElement>(null)
+  const latestMessageAnchorRef = useRef<HTMLDivElement>(null)
+  const lastAutoScrollCountRef = useRef(0)
   const dragDepthRef = useRef(0)
 
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
+
+  useEffect(() => {
+    if (authPrompt !== 'none') return
+    const shouldAutoScroll =
+      messages.length > lastAutoScrollCountRef.current || lastAutoScrollCountRef.current === 0
+    lastAutoScrollCountRef.current = messages.length
+    if (!shouldAutoScroll) return
+    const id = window.requestAnimationFrame(() => {
+      if (messageViewportRef.current === null) return
+      latestMessageAnchorRef.current?.scrollIntoView({
+        block: 'end',
+      })
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [messages, authPrompt])
+
+  useEffect(() => {
+    if (authPrompt !== 'none') {
+      lastAutoScrollCountRef.current = 0
+    }
+  }, [authPrompt])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -170,9 +232,13 @@ export default function App() {
 
   useEffect(() => {
     return () => {
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl)
+      for (const item of attachments) {
+        if (item.imagePreviewUrl) {
+          URL.revokeObjectURL(item.imagePreviewUrl)
+        }
+      }
     }
-  }, [imagePreviewUrl])
+  }, [attachments])
 
   useEffect(() => {
     const onError = (event: ErrorEvent) => {
@@ -197,37 +263,53 @@ export default function App() {
     }
   }, [])
 
-  const clearAttachment = useCallback(() => {
-    if (imagePreviewUrl) {
-      URL.revokeObjectURL(imagePreviewUrl)
-    }
-    setImagePreviewUrl(null)
-    setAttachment(null)
-    setAttachmentKind(null)
+  const clearAttachments = useCallback(() => {
+    setAttachments((prev) => {
+      for (const item of prev) {
+        if (item.imagePreviewUrl) {
+          URL.revokeObjectURL(item.imagePreviewUrl)
+        }
+      }
+      return []
+    })
     if (fileInputRef.current) fileInputRef.current.value = ''
     if (imageInputRef.current) imageInputRef.current.value = ''
-  }, [imagePreviewUrl])
+  }, [])
 
-  const onSelectAttachment = useCallback(
-    (file: File | null, kind: AttachmentKind) => {
-      if (!file) return
-      if (imagePreviewUrl) {
-        URL.revokeObjectURL(imagePreviewUrl)
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => {
+      const target = prev.find((item) => item.id === id)
+      if (target?.imagePreviewUrl) {
+        URL.revokeObjectURL(target.imagePreviewUrl)
       }
-      setAttachment(file)
-      setAttachmentKind(kind)
-      if (kind === 'image') {
-        setImagePreviewUrl(URL.createObjectURL(file))
-      } else {
-        setImagePreviewUrl(null)
-      }
+      return prev.filter((item) => item.id !== id)
+    })
+  }, [])
+
+  const onSelectAttachments = useCallback(
+    (files: FileList | null, kindHint?: AttachmentKind) => {
+      if (files === null) return
+      const picked = Array.from(files)
+      if (picked.length === 0) return
+      setAttachments((prev) => [
+        ...prev,
+        ...picked.map((file) => {
+          const kind = kindHint ?? inferAttachmentKind(file)
+          return {
+            id: `${file.name}:${file.size}:${file.lastModified}:${Math.random().toString(36).slice(2, 8)}`,
+            file,
+            kind,
+            imagePreviewUrl: kind === 'image' ? URL.createObjectURL(file) : null,
+          }
+        }),
+      ])
     },
-    [imagePreviewUrl],
+    [],
   )
 
   const send = useCallback(async () => {
     const content = text.trim()
-    if (!content && !attachment) return
+    if (!content && attachments.length === 0) return
     setError(null)
     setSending(true)
     try {
@@ -235,17 +317,22 @@ export default function App() {
         setError('PIN_REQUIRED')
         return
       }
-      if (attachment) {
-        const { url } = await uploadBlob(apiBase, authToken, attachment)
-        const caption = content || attachment.name
-        await postTextMessage(apiBase, authToken, {
-          type: 'file',
-          content: caption,
-          file_url: url,
-          has_pin: usePin,
-          pin: usePin ? pin : undefined,
-        })
-        clearAttachment()
+      if (attachments.length > 0) {
+        for (const item of attachments) {
+          const { url } = await uploadBlob(apiBase, authToken, item.file)
+          const caption =
+            attachments.length === 1 && content !== ''
+              ? content
+              : item.file.name
+          await postTextMessage(apiBase, authToken, {
+            type: 'file',
+            content: caption,
+            file_url: url,
+            has_pin: usePin,
+            pin: usePin ? pin : undefined,
+          })
+        }
+        clearAttachments()
       } else {
         await postTextMessage(apiBase, authToken, {
           content,
@@ -264,7 +351,7 @@ export default function App() {
     } finally {
       setSending(false)
     }
-  }, [apiBase, text, usePin, pin, attachment, clearAttachment, authToken, ensureAuthorized])
+  }, [apiBase, text, usePin, pin, attachments, clearAttachments, authToken, ensureAuthorized])
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -274,7 +361,7 @@ export default function App() {
   }
 
   const onUnlock = async (id: string) => {
-    const p = window.prompt('PIN')
+    const p = window.prompt('Enter passcode for this protected message')
     if (p === null) return
     setError(null)
     try {
@@ -324,6 +411,48 @@ export default function App() {
     }
   }, [authPasswordInput, authPrompt, apiBase, persistToken])
 
+  const openQrDialog = useCallback(async () => {
+    setQrOpen(true)
+    setQrBusy(true)
+    setQrError(null)
+    setQrImageUrl(null)
+    setQrTargetUrl('')
+    try {
+      const entrypoints = await fetchServerEntrypoints(apiBase, authToken)
+      let target = entrypoints.preferred_url || entrypoints.current_url || window.location.origin
+      if (authEnabled) {
+        const ticketResult = await createQrTicket(apiBase)
+        const withTicket = new URL(target)
+        withTicket.searchParams.set('qr_ticket', ticketResult.ticket)
+        target = withTicket.toString()
+      }
+      const image = await QRCode.toDataURL(target, {
+        width: 280,
+        margin: 1,
+      })
+      setQrTargetUrl(target)
+      setQrImageUrl(image)
+    } catch (e) {
+      if (ensureAuthorized(e)) {
+        setQrOpen(false)
+        return
+      }
+      const fallback = window.location.origin
+      try {
+        const image = await QRCode.toDataURL(fallback, {
+          width: 280,
+          margin: 1,
+        })
+        setQrTargetUrl(fallback)
+        setQrImageUrl(image)
+      } catch {
+        setQrError(e instanceof Error ? e.message : 'QR_GENERATE_FAILED')
+      }
+    } finally {
+      setQrBusy(false)
+    }
+  }, [apiBase, authToken, authEnabled, ensureAuthorized])
+
   const onComposerDragEnter = useCallback((e: React.DragEvent<HTMLElement>) => {
     if (!hasDraggedFiles(e)) return
     e.preventDefault()
@@ -352,11 +481,9 @@ export default function App() {
       e.preventDefault()
       dragDepthRef.current = 0
       setDraggingFile(false)
-      const file = e.dataTransfer.files?.[0] ?? null
-      if (!file) return
-      onSelectAttachment(file, inferAttachmentKind(file))
+      onSelectAttachments(e.dataTransfer.files)
     },
-    [onSelectAttachment],
+    [onSelectAttachments],
   )
 
   if (fatalError) {
@@ -410,6 +537,15 @@ export default function App() {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '4px' }}><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
           Refresh
         </button>
+        <button
+          type="button"
+          className="ghost"
+          onClick={() => void openQrDialog()}
+          aria-label="Show QR code for mobile browser"
+          style={{ border: 'none', background: 'var(--code-bg)' }}
+        >
+          QR
+        </button>
       </header>
 
       {appUpdate && !updateBannerDismissed ? (
@@ -438,37 +574,55 @@ export default function App() {
         </div>
       ) : null}
 
-      {error ? <div className="err">{error}</div> : null}
-
       {authPrompt !== 'none' ? (
-        <div className="err" role="alert" style={{ display: 'grid', gap: '8px' }}>
-          <strong>{authPrompt === 'setup' ? 'Set server password' : 'Enter connection password'}</strong>
-          {authManagedByEnv && authPrompt === 'setup' ? (
-            <span>Password is managed by server environment variable.</span>
-          ) : (
-            <>
-              <input
-                className="field"
-                type="password"
-                value={authPasswordInput}
-                onChange={(e) => setAuthPasswordInput(e.target.value)}
-                placeholder="Connection password"
-                autoComplete="off"
-              />
-              <button
-                type="button"
-                className="send"
-                onClick={() => void submitAuth()}
-                disabled={authBusy}
-              >
-                {authBusy ? 'Please wait…' : authPrompt === 'setup' ? 'Enable Password' : 'Connect'}
-              </button>
-            </>
-          )}
-        </div>
+        <main className="main">
+          <div className="auth-gate" role="alert">
+            <h3>{authPrompt === 'setup' ? 'Set server password' : 'Enter connection password'}</h3>
+            <p className="auth-gate-hint">
+              {authPrompt === 'setup'
+                ? 'Set once, then phone scan can auto-login.'
+                : 'Login first to continue sending and viewing messages.'}
+            </p>
+            {authManagedByEnv && authPrompt === 'setup' ? (
+              <p className="auth-gate-hint">
+                Password is managed by `MESSAGE_DROP_SERVER_PASSWORD`.
+              </p>
+            ) : (
+              <>
+                <input
+                  className="field"
+                  type="password"
+                  value={authPasswordInput}
+                  onChange={(e) => setAuthPasswordInput(e.target.value)}
+                  placeholder="Connection password"
+                  autoComplete="off"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      void submitAuth()
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="send"
+                  onClick={() => void submitAuth()}
+                  disabled={authBusy}
+                >
+                  {authBusy ? 'Please wait…' : authPrompt === 'setup' ? 'Enable Password' : 'Connect'}
+                </button>
+              </>
+            )}
+            {error ? <div className="err">{error}</div> : null}
+          </div>
+        </main>
       ) : null}
 
-      <main className="main">
+      {authPrompt === 'none' ? (
+      <>
+      {error ? <div className="err">{error}</div> : null}
+
+      <main className="main" ref={messageViewportRef}>
         {messages.length === 0 ? (
           <div className="empty-state">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
@@ -487,14 +641,14 @@ export default function App() {
               </div>
               <div className="body">
                 {m.has_pin && m.content === '' ? (
-                  <span className="locked">Locked</span>
+                  <span className="locked">Protected message</span>
                 ) : (
                   <span>{m.content}</span>
                 )}
                 {m.file_url ? (
                   <a
                     className="file-link"
-                    href={`${apiBase}${m.file_url}`}
+                    href={buildDownloadHref(m.file_url)}
                     target={isAndroidWebView ? undefined : '_blank'}
                     rel={isAndroidWebView ? undefined : 'noreferrer'}
                     download
@@ -518,8 +672,40 @@ export default function App() {
           ))}
         </ul>
         )}
+        <div ref={latestMessageAnchorRef} aria-hidden className="list-end-anchor" />
       </main>
+      </>
+      ) : null}
 
+      {qrOpen ? (
+        <div
+          className="qr-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Mobile access QR"
+          onClick={() => setQrOpen(false)}
+        >
+          <div className="qr-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Scan to open on phone</h3>
+            <p className="qr-sub">Keep phone and server on the same LAN.</p>
+            {qrBusy ? <p className="qr-sub">Generating QR…</p> : null}
+            {!qrBusy && qrImageUrl ? (
+              <img className="qr-image" src={qrImageUrl} alt="LAN Web UI QR code" />
+            ) : null}
+            {!qrBusy && qrTargetUrl ? (
+              <p className="qr-url">{qrTargetUrl}</p>
+            ) : null}
+            {qrError ? <p className="qr-error">{qrError}</p> : null}
+            <div className="qr-actions">
+              <button type="button" className="ghost" onClick={() => setQrOpen(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {authPrompt === 'none' ? (
       <footer
         className={`composer${draggingFile ? ' composer-drop-active' : ''}`}
         onDragEnter={onComposerDragEnter}
@@ -537,21 +723,25 @@ export default function App() {
             className="hidden-input"
             type="file"
             accept="image/*"
+            multiple
             aria-hidden
             tabIndex={-1}
-            onChange={(e) =>
-              onSelectAttachment(e.target.files?.[0] ?? null, 'image')
-            }
+            onChange={(e) => {
+              onSelectAttachments(e.target.files, 'image')
+              if (imageInputRef.current) imageInputRef.current.value = ''
+            }}
           />
           <input
             ref={fileInputRef}
             className="hidden-input"
             type="file"
+            multiple
             aria-hidden
             tabIndex={-1}
-            onChange={(e) =>
-              onSelectAttachment(e.target.files?.[0] ?? null, 'file')
-            }
+            onChange={(e) => {
+              onSelectAttachments(e.target.files, 'file')
+              if (fileInputRef.current) fileInputRef.current.value = ''
+            }}
           />
 
           <button
@@ -559,7 +749,11 @@ export default function App() {
             className="ghost"
             onClick={() => imageInputRef.current?.click()}
             aria-label="Attach image"
-            style={{ color: attachmentKind === 'image' ? 'var(--accent)' : undefined }}
+            style={{
+              color: attachments.some((item) => item.kind === 'image')
+                ? 'var(--accent)'
+                : undefined,
+            }}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
             Image
@@ -569,7 +763,11 @@ export default function App() {
             className="ghost"
             onClick={() => fileInputRef.current?.click()}
             aria-label="Attach file"
-            style={{ color: attachmentKind === 'file' ? 'var(--accent)' : undefined }}
+            style={{
+              color: attachments.some((item) => item.kind === 'file')
+                ? 'var(--accent)'
+                : undefined,
+            }}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
             File
@@ -582,41 +780,66 @@ export default function App() {
           </div>
         ) : null}
 
-        {attachment ? (
-          <div
-            className="composer-attachment"
-            role="status"
-            aria-live="polite"
-          >
-            {imagePreviewUrl ? (
-              <img
-                className="attach-preview"
-                src={imagePreviewUrl}
-                alt="Selected image preview"
-              />
-            ) : null}
-            <span className="attach-name">
-              {attachmentKind === 'image' ? 'Image' : 'File'}: {attachment.name}
-            </span>
+        {attachments.length > 0 ? (
+          <div className="composer-attachments" role="status" aria-live="polite">
+            {attachments.map((item) => (
+              <div key={item.id} className="composer-attachment">
+                {item.imagePreviewUrl ? (
+                  <img
+                    className="attach-preview"
+                    src={item.imagePreviewUrl}
+                    alt="Selected image preview"
+                  />
+                ) : null}
+                <span className="attach-name">
+                  {item.kind === 'image' ? 'Image' : 'File'}: {item.file.name}
+                </span>
+                <button
+                  type="button"
+                  className="ghost small"
+                  onClick={() => removeAttachment(item.id)}
+                  aria-label="Remove attachment"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
             <button
               type="button"
               className="ghost small"
-              onClick={clearAttachment}
-              aria-label="Remove attachment"
+              onClick={clearAttachments}
+              aria-label="Clear all attachments"
             >
-              Clear
+              Clear all
             </button>
           </div>
         ) : null}
 
-        <div className="composer-field-row">
+        <div className={`composer-field-row${usePin ? ' protected' : ''}`}>
+          {usePin ? (
+            <span className="composer-field-lock-icon" aria-hidden>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="3" y="11" width="18" height="10" rx="2" ry="2" />
+                <path d="M7 11V8a5 5 0 0 1 10 0v3" />
+              </svg>
+            </span>
+          ) : null}
           <textarea
             ref={inputRef}
-            className="field"
+            className={`field${usePin ? ' protected' : ''}`}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Type a message…"
+            placeholder={usePin ? 'Type a protected message…' : 'Type a message…'}
             autoComplete="off"
             aria-label="Message text"
             rows={1}
@@ -636,18 +859,35 @@ export default function App() {
               checked={usePin}
               onChange={(e) => setUsePin(e.target.checked)}
             />
-            PIN
+            Protected message
           </label>
           {usePin ? (
-            <input
-              className="field pin"
-              type="password"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              placeholder="PIN"
-              autoComplete="off"
-              aria-label="Message PIN"
-            />
+            <div className="pin-input-wrap">
+              <span className="pin-lock-icon" aria-hidden>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3" y="11" width="18" height="10" rx="2" ry="2" />
+                  <path d="M7 11V8a5 5 0 0 1 10 0v3" />
+                </svg>
+              </span>
+              <input
+                className="field pin"
+                type="password"
+                value={pin}
+                onChange={(e) => setPin(e.target.value)}
+                placeholder="Enter passcode"
+                autoComplete="off"
+                aria-label="Protected message passcode"
+              />
+            </div>
           ) : null}
           <button
             type="button"
@@ -665,6 +905,7 @@ export default function App() {
           </button>
         </div>
       </footer>
+      ) : null}
     </div>
   )
 }

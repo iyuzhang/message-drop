@@ -31,6 +31,10 @@ export interface LoginResult {
   expiresAt: number | null
 }
 
+interface QrTicketRecord {
+  expiresAt: number
+}
+
 function base64UrlEncode(input: string | Buffer): string {
   return Buffer.from(input)
     .toString('base64')
@@ -155,13 +159,18 @@ export class AuthManager {
   private version = 1
   private readonly managedByEnv: boolean
   private readonly tokenTtlSeconds: number | null
+  private readonly qrTicketTtlMs: number
+  private readonly qrTickets = new Map<string, QrTicketRecord>()
 
   constructor(
     private readonly authFilePath: string,
     envPassword: string | undefined,
     rawTtl: string | undefined,
+    rawQrTicketTtl: string | undefined,
   ) {
     this.tokenTtlSeconds = parseTtlSeconds(rawTtl)
+    const parsedQrTtl = parseTtlSeconds(rawQrTicketTtl)
+    this.qrTicketTtlMs = (parsedQrTtl ?? 3 * 60 * 60) * 1000
     if (envPassword !== undefined && envPassword !== '') {
       this.passwordHash = hashPassword(envPassword)
       this.managedByEnv = true
@@ -217,6 +226,13 @@ export class AuthManager {
   login(password: string): LoginResult | null {
     if (this.passwordHash === null) return null
     if (!verifyPasswordHash(password, this.passwordHash)) return null
+    return this.issueSessionToken()
+  }
+
+  private issueSessionToken(): LoginResult {
+    if (this.passwordHash === null) {
+      throw new Error('AUTH_DISABLED')
+    }
     const now = Math.floor(Date.now() / 1000)
     const exp =
       this.tokenTtlSeconds === null ? undefined : now + this.tokenTtlSeconds
@@ -238,6 +254,35 @@ export class AuthManager {
     }
   }
 
+  private pruneQrTickets(now = Date.now()): void {
+    for (const [key, item] of this.qrTickets) {
+      if (item.expiresAt <= now) {
+        this.qrTickets.delete(key)
+      }
+    }
+  }
+
+  issueQrTicket(): { ticket: string; expiresAt: number } | null {
+    if (this.passwordHash === null) return null
+    const now = Date.now()
+    this.pruneQrTickets(now)
+    const ticket = base64UrlEncode(randomBytes(24))
+    const expiresAt = now + this.qrTicketTtlMs
+    this.qrTickets.set(ticket, { expiresAt })
+    return { ticket, expiresAt }
+  }
+
+  consumeQrTicket(ticket: string): LoginResult | null {
+    if (this.passwordHash === null) return null
+    const now = Date.now()
+    this.pruneQrTickets(now)
+    const record = this.qrTickets.get(ticket)
+    if (record === undefined) return null
+    this.qrTickets.delete(ticket)
+    if (record.expiresAt <= now) return null
+    return this.issueSessionToken()
+  }
+
   setupPassword(password: string): LoginResult | 'ALREADY_CONFIGURED' | 'MANAGED_BY_ENV' {
     if (this.managedByEnv) return 'MANAGED_BY_ENV'
     if (this.passwordHash !== null) return 'ALREADY_CONFIGURED'
@@ -247,6 +292,7 @@ export class AuthManager {
     }
     this.passwordHash = encodeScryptHash(normalized)
     this.version = 1
+    this.qrTickets.clear()
     writeStoredConfig(this.authFilePath, {
       password_hash: this.passwordHash,
       version: this.version,
@@ -278,6 +324,7 @@ export class AuthManager {
     }
     this.passwordHash = encodeScryptHash(normalized)
     this.version += 1
+    this.qrTickets.clear()
     writeStoredConfig(this.authFilePath, {
       password_hash: this.passwordHash,
       version: this.version,

@@ -11,6 +11,7 @@ export interface DaemonRuntimeFiles {
 export interface DaemonState {
   readonly pid: number
   readonly url: string
+  readonly scanUrl?: string
   readonly startedAt: string
 }
 
@@ -58,6 +59,7 @@ export function readDaemonState(path: string): DaemonState | null {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
       pid?: unknown
       url?: unknown
+      scanUrl?: unknown
       startedAt?: unknown
     }
     if (
@@ -68,6 +70,8 @@ export function readDaemonState(path: string): DaemonState | null {
       return {
         pid: parsed.pid,
         url: parsed.url,
+        scanUrl:
+          typeof parsed.scanUrl === 'string' ? parsed.scanUrl : undefined,
         startedAt:
           typeof parsed.startedAt === 'string'
             ? parsed.startedAt

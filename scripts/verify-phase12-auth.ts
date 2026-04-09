@@ -144,6 +144,54 @@ async function main(): Promise<void> {
     })
     assert(listAuth.status === 200, `list auth: ${listAuth.status}`)
 
+    const uploadForm = new FormData()
+    uploadForm.set(
+      'file',
+      new Blob([Buffer.from('auth-download-regression', 'utf8')], {
+        type: 'text/plain',
+      }),
+      'regression-auth-download.txt',
+    )
+    const uploadResp = await fetch(`${base}/api/upload`, {
+      method: 'POST',
+      headers: authHeader(token1),
+      body: uploadForm,
+    })
+    assert(uploadResp.status === 200, `upload: ${uploadResp.status}`)
+    const uploadText = await uploadResp.text()
+    let uploadBody: { url?: string } = {}
+    try {
+      uploadBody = JSON.parse(uploadText) as { url?: string }
+    } catch {
+      throw new Error(`upload response must be JSON, got: ${uploadText.slice(0, 120)}`)
+    }
+    assert(typeof uploadBody.url === 'string', 'upload url missing')
+    assert(uploadBody.url.startsWith('/api/files/'), `unexpected upload url: ${uploadBody.url}`)
+    const fileUrl = new URL(uploadBody.url, base)
+
+    const fileNoAuth = await fetch(fileUrl)
+    assert(fileNoAuth.status === 401, `file no auth should be 401: ${fileNoAuth.status}`)
+
+    const fileAuthHeader = await fetch(fileUrl, {
+      headers: authHeader(token1),
+    })
+    assert(fileAuthHeader.status === 200, `file auth header should be 200: ${fileAuthHeader.status}`)
+    const fileAuthHeaderText = await fileAuthHeader.text()
+    assert(
+      fileAuthHeaderText === 'auth-download-regression',
+      `file auth header content mismatch: ${fileAuthHeaderText.slice(0, 80)}`,
+    )
+
+    const fileAuthQuery = new URL(fileUrl)
+    fileAuthQuery.searchParams.set('token', token1)
+    const fileAuthQueryResp = await fetch(fileAuthQuery)
+    assert(fileAuthQueryResp.status === 200, `file auth query should be 200: ${fileAuthQueryResp.status}`)
+    const fileAuthQueryText = await fileAuthQueryResp.text()
+    assert(
+      fileAuthQueryText === 'auth-download-regression',
+      `file auth query content mismatch: ${fileAuthQueryText.slice(0, 80)}`,
+    )
+
     await expectWsUnauthorized(`ws://127.0.0.1:35887/ws`)
     await expectWsSnapshot(`ws://127.0.0.1:35887/ws?token=${encodeURIComponent(token1)}`)
 

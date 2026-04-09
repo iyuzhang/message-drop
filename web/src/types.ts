@@ -8,6 +8,13 @@ export interface AppUpdateInfo {
   currentVersion: string
 }
 
+export interface ServerEntrypoints {
+  current_url: string
+  local_url: string
+  lan_urls: string[]
+  preferred_url: string
+}
+
 declare global {
   interface Window {
     MessageDropAndroid?: {

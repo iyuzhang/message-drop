@@ -19,6 +19,7 @@ export interface MessageDropServerConfig {
   authFilePath: string
   authPassword: string | undefined
   authTokenTtl: string | undefined
+  authQrTicketTtl: string | undefined
 }
 
 function defaultDataRoot(): string {
@@ -43,7 +44,17 @@ export function resolveMessageDropServerConfigFromEnv(): MessageDropServerConfig
   const authFilePath = join(dirname(dataPath), 'auth.json')
   const authPassword = process.env.MESSAGE_DROP_SERVER_PASSWORD
   const authTokenTtl = process.env.MESSAGE_DROP_AUTH_TOKEN_TTL
-  return { host, port, dataPath, filesPath, authFilePath, authPassword, authTokenTtl }
+  const authQrTicketTtl = process.env.MESSAGE_DROP_AUTH_QR_TICKET_TTL
+  return {
+    host,
+    port,
+    dataPath,
+    filesPath,
+    authFilePath,
+    authPassword,
+    authTokenTtl,
+    authQrTicketTtl,
+  }
 }
 
 /**
@@ -56,6 +67,7 @@ export function startMessageDropServer(config: MessageDropServerConfig): void {
     config.authFilePath,
     config.authPassword,
     config.authTokenTtl,
+    config.authQrTicketTtl,
   )
 
   let pushNewMessage: (msg: PoolMessage) => void = () => {}

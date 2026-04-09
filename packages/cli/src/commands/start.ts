@@ -11,7 +11,9 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { networkInterfaces } from 'node:os'
 import { join } from 'node:path'
+import qrcodeTerminal from 'qrcode-terminal'
 import {
   findMessageDropRepoRootFromCli,
   resolveDefaultGlobalDataPaths,
@@ -165,7 +167,140 @@ function buildChildEnv(
 }
 
 function displayHostForUrl(host: string): string {
-  return host === '0.0.0.0' ? '127.0.0.1' : host
+  return host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host
+}
+
+function isPrivateIpv4(address: string): boolean {
+  if (address.startsWith('10.')) return true
+  if (address.startsWith('192.168.')) return true
+  if (!address.startsWith('172.')) return false
+  const parts = address.split('.')
+  const second = Number(parts[1])
+  return Number.isInteger(second) && second >= 16 && second <= 31
+}
+
+function isLikelyVirtualInterface(name: string): boolean {
+  const n = name.toLowerCase()
+  return (
+    n.startsWith('docker') ||
+    n.startsWith('veth') ||
+    n.startsWith('br-') ||
+    n.startsWith('tailscale') ||
+    n.startsWith('utun') ||
+    n.startsWith('vboxnet') ||
+    n.startsWith('vmnet') ||
+    n.startsWith('zt')
+  )
+}
+
+function firstLanIpv4(): string | undefined {
+  const interfaces = networkInterfaces()
+  const preferred: string[] = []
+  const fallback: string[] = []
+  for (const [name, records] of Object.entries(interfaces)) {
+    if (isLikelyVirtualInterface(name)) {
+      continue
+    }
+    for (const record of records ?? []) {
+      if (record.family !== 'IPv4') continue
+      if (record.internal) continue
+      if (record.address.startsWith('169.254.')) continue
+      if (!isPrivateIpv4(record.address)) continue
+      if (record.address.startsWith('192.168.') || record.address.startsWith('10.')) {
+        preferred.push(record.address)
+      } else {
+        fallback.push(record.address)
+      }
+    }
+  }
+  return preferred[0] ?? fallback[0]
+}
+
+function buildHttpUrl(host: string, port: number): string {
+  const normalizedHost =
+    host.includes(':') && !host.startsWith('[') && !host.endsWith(']')
+      ? `[${host}]`
+      : host
+  return `http://${normalizedHost}:${port}/`
+}
+
+function resolveScanUrl(host: string, port: number): string {
+  if (host === '0.0.0.0' || host === '::') {
+    const lanHost = firstLanIpv4()
+    if (lanHost !== undefined) {
+      return buildHttpUrl(lanHost, port)
+    }
+  }
+  return buildHttpUrl(displayHostForUrl(host), port)
+}
+
+function printScanQr(url: string): void {
+  if (isCiEnvironment()) {
+    return
+  }
+  console.log(`scan-url: ${url}`)
+  console.log('Scan QR from your phone browser:')
+  qrcodeTerminal.generate(url, { small: true })
+}
+
+async function enrichScanUrlWithQrTicket(
+  scanUrl: string,
+  port: number,
+): Promise<string> {
+  const ticketEndpoint = `http://127.0.0.1:${port}/api/auth/qr-ticket`
+  for (let i = 0; i < 10; i++) {
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 700)
+      const response = await fetch(ticketEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        signal: controller.signal,
+      })
+      clearTimeout(timer)
+      if (response.status === 400) {
+        // AUTH_DISABLED: plain URL is enough.
+        return scanUrl
+      }
+      if (!response.ok) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 180))
+        continue
+      }
+      const body = (await response.json()) as { ticket?: string }
+      if (typeof body.ticket !== 'string' || body.ticket === '') {
+        return scanUrl
+      }
+      const target = new URL(scanUrl)
+      target.searchParams.set('qr_ticket', body.ticket)
+      return target.toString()
+    } catch {
+      await new Promise<void>((resolve) => setTimeout(resolve, 180))
+    }
+  }
+  return scanUrl
+}
+
+function portFromUrl(url: string): number | undefined {
+  try {
+    const parsed = new URL(url)
+    const n = Number(parsed.port)
+    if (Number.isInteger(n) && n > 0 && n <= 65535) {
+      return n
+    }
+  } catch {
+    // ignore malformed url
+  }
+  return undefined
+}
+
+function hostFromUrl(url: string): string | undefined {
+  try {
+    const parsed = new URL(url)
+    return parsed.hostname
+  } catch {
+    return undefined
+  }
 }
 
 function effectiveHost(flags: ParsedStartFlags): string {
@@ -307,6 +442,7 @@ export async function runStart(args: string[]): Promise<void> {
   )
   const host = effectiveHost(flags)
   const fallbackOpenUrl = `http://${displayHostForUrl(host)}:${port}/`
+  const scanUrl = resolveScanUrl(host, port)
   const runtimeFiles = resolveDaemonRuntimeFiles(flags.dataDir, childEnv)
   const commandArgs =
     target.mode === 'repo-tsx'
@@ -322,6 +458,14 @@ export async function runStart(args: string[]): Promise<void> {
       )
       console.log(`message-drop: ${state.url}`)
       console.log(`log: ${runtimeFiles.logFile}`)
+      const runningPort = portFromUrl(state.url) ?? port
+      const runningHost = hostFromUrl(state.url) ?? host
+      const runningScanUrl = state.scanUrl ?? resolveScanUrl(runningHost, runningPort)
+      const runningTicketUrl = await enrichScanUrlWithQrTicket(
+        runningScanUrl,
+        runningPort,
+      )
+      printScanQr(runningTicketUrl)
       if (flags.open) {
         openUrlBestEffort(state.url)
       }
@@ -343,15 +487,18 @@ export async function runStart(args: string[]): Promise<void> {
     if (pid === undefined) {
       throw new Error('message-drop start: failed to obtain daemon pid')
     }
+    const ticketScanUrl = await enrichScanUrlWithQrTicket(scanUrl, port)
     const snapshot: DaemonState = {
       pid,
       url: fallbackOpenUrl,
+      scanUrl: ticketScanUrl,
       startedAt: new Date().toISOString(),
     }
     writeFileSync(runtimeFiles.pidFile, `${JSON.stringify(snapshot, null, 2)}\n`)
     console.log(`message-drop start: started in background (pid ${pid})`)
     console.log(`message-drop: ${fallbackOpenUrl}`)
     console.log(`log: ${runtimeFiles.logFile}`)
+    printScanQr(ticketScanUrl)
     if (flags.open) {
       openUrlBestEffort(fallbackOpenUrl)
     }

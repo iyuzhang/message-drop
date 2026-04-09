@@ -35,6 +35,29 @@ async function run(port: number): Promise<void> {
   const hj = (await h.json()) as { ok?: boolean }
   if (hj.ok !== true) throw new Error('health body')
 
+  const entrypoints = await fetch(`${base}/api/entrypoints`)
+  if (!entrypoints.ok) throw new Error(`entrypoints: ${entrypoints.status}`)
+  const ej = (await entrypoints.json()) as {
+    current_url?: string
+    local_url?: string
+    lan_urls?: string[]
+    preferred_url?: string
+  }
+  if (
+    typeof ej.current_url !== 'string' ||
+    typeof ej.local_url !== 'string' ||
+    !Array.isArray(ej.lan_urls) ||
+    typeof ej.preferred_url !== 'string'
+  ) {
+    throw new Error('entrypoints body contract')
+  }
+  if (!ej.current_url.startsWith('http://127.0.0.1:')) {
+    throw new Error('entrypoints current_url should use loopback test origin')
+  }
+  if (!ej.preferred_url.startsWith('http://')) {
+    throw new Error('entrypoints preferred_url should be http url')
+  }
+
   const list0 = await fetch(`${base}/api/messages`)
   if (!list0.ok) throw new Error(`list0: ${list0.status}`)
   const j0 = (await list0.json()) as { messages?: unknown[] }

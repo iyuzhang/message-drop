@@ -1,3 +1,4 @@
+import { networkInterfaces } from 'node:os'
 import { Readable } from 'node:stream'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
@@ -14,6 +15,89 @@ export interface MessageAppOptions {
   onMessageCreated?: (msg: PoolMessage) => void
   fileStore?: FileStore
   authManager?: AuthManager
+}
+
+function isPrivateIpv4(address: string): boolean {
+  if (address.startsWith('10.')) return true
+  if (address.startsWith('192.168.')) return true
+  if (!address.startsWith('172.')) return false
+  const parts = address.split('.')
+  const second = Number(parts[1])
+  return Number.isInteger(second) && second >= 16 && second <= 31
+}
+
+function isLikelyVirtualInterface(name: string): boolean {
+  const n = name.toLowerCase()
+  return (
+    n.startsWith('docker') ||
+    n.startsWith('veth') ||
+    n.startsWith('br-') ||
+    n.startsWith('tailscale') ||
+    n.startsWith('utun') ||
+    n.startsWith('vboxnet') ||
+    n.startsWith('vmnet') ||
+    n.startsWith('zt')
+  )
+}
+
+function buildBaseUrl(protocol: string, host: string, port: number, omitDefaultPort: boolean): string {
+  const normalizedHost =
+    host.includes(':') && !host.startsWith('[') && !host.endsWith(']')
+      ? `[${host}]`
+      : host
+  const portPart = omitDefaultPort ? '' : `:${port}`
+  return `${protocol}://${normalizedHost}${portPart}/`
+}
+
+function collectLanIpv4Hosts(): string[] {
+  const interfaces = networkInterfaces()
+  const preferred: string[] = []
+  const fallback: string[] = []
+  const seen = new Set<string>()
+  for (const [name, records] of Object.entries(interfaces)) {
+    if (isLikelyVirtualInterface(name)) continue
+    for (const record of records ?? []) {
+      if (record.family !== 'IPv4') continue
+      if (record.internal) continue
+      if (record.address.startsWith('169.254.')) continue
+      if (!isPrivateIpv4(record.address)) continue
+      if (seen.has(record.address)) continue
+      seen.add(record.address)
+      if (record.address.startsWith('192.168.') || record.address.startsWith('10.')) {
+        preferred.push(record.address)
+      } else {
+        fallback.push(record.address)
+      }
+    }
+  }
+  return [...preferred, ...fallback]
+}
+
+function buildEntrypointsFromRequest(requestUrl: URL): {
+  current_url: string
+  local_url: string
+  lan_urls: string[]
+  preferred_url: string
+} {
+  const protocol = requestUrl.protocol === 'https:' ? 'https' : 'http'
+  const rawPort = requestUrl.port
+  const port = rawPort === '' ? (protocol === 'https' ? 443 : 80) : Number(rawPort)
+  const omitDefaultPort = rawPort === ''
+  const currentHost = requestUrl.hostname
+  const currentUrl = buildBaseUrl(protocol, currentHost, port, omitDefaultPort)
+  const localHost =
+    currentHost === '0.0.0.0' || currentHost === '::' ? '127.0.0.1' : currentHost
+  const localUrl = buildBaseUrl(protocol, localHost, port, omitDefaultPort)
+  const lanUrls = collectLanIpv4Hosts()
+    .map((host) => buildBaseUrl(protocol, host, port, false))
+    .filter((url) => url !== localUrl)
+  const preferredUrl = lanUrls[0] ?? localUrl
+  return {
+    current_url: currentUrl,
+    local_url: localUrl,
+    lan_urls: lanUrls,
+    preferred_url: preferredUrl,
+  }
 }
 
 export function createMessageApp(
@@ -59,17 +143,34 @@ export function createMessageApp(
 
   app.use('/api/*', async (c, next) => {
     const path = c.req.path
-    const publicPaths = new Set(['/api/auth/status', '/api/auth/login', '/api/auth/setup'])
+    const publicPaths = new Set([
+      '/api/auth/status',
+      '/api/auth/login',
+      '/api/auth/setup',
+      '/api/auth/qr-ticket',
+      '/api/auth/consume-qr-ticket',
+    ])
     const auth = opts.authManager
     if (auth === undefined || !auth.status().enabled || publicPaths.has(path)) {
       await next()
       return
     }
-    const token = extractBearerToken(c.req.header('Authorization'))
+    let token = extractBearerToken(c.req.header('Authorization'))
+    if (token === null && path.startsWith('/api/files/')) {
+      const tokenFromQuery = new URL(c.req.url).searchParams.get('token')
+      if (typeof tokenFromQuery === 'string' && tokenFromQuery !== '') {
+        token = tokenFromQuery
+      }
+    }
     if (token === null || !auth.verifyToken(token)) {
       return c.json({ error: 'UNAUTHORIZED' }, 401)
     }
     await next()
+  })
+
+  app.get('/api/entrypoints', (c) => {
+    const requestUrl = new URL(c.req.url)
+    return c.json(buildEntrypointsFromRequest(requestUrl))
   })
 
   app.get('/api/auth/status', (c) => {
@@ -184,6 +285,47 @@ export function createMessageApp(
       }
       throw e
     }
+  })
+
+  app.post('/api/auth/qr-ticket', (c) => {
+    const auth = opts.authManager
+    if (auth === undefined || !auth.status().enabled) {
+      return c.json({ error: 'AUTH_DISABLED' }, 400)
+    }
+    const result = auth.issueQrTicket()
+    if (result === null) {
+      return c.json({ error: 'AUTH_DISABLED' }, 400)
+    }
+    return c.json({
+      ticket: result.ticket,
+      expires_at: result.expiresAt,
+    })
+  })
+
+  app.post('/api/auth/consume-qr-ticket', async (c) => {
+    const auth = opts.authManager
+    if (auth === undefined || !auth.status().enabled) {
+      return c.json({ error: 'AUTH_DISABLED' }, 400)
+    }
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: 'INVALID_JSON' }, 400)
+    }
+    const o = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : null
+    const ticket = typeof o?.ticket === 'string' ? o.ticket : ''
+    if (ticket === '') {
+      return c.json({ error: 'TICKET_REQUIRED' }, 400)
+    }
+    const result = auth.consumeQrTicket(ticket)
+    if (result === null) {
+      return c.json({ error: 'INVALID_OR_EXPIRED_TICKET' }, 401)
+    }
+    return c.json({
+      token: result.token,
+      expires_at: result.expiresAt,
+    })
   })
 
   app.get('/api/messages', async (c) => {

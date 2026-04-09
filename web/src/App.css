@@ -116,6 +116,70 @@
   color: var(--text-h);
 }
 
+.qr-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+  padding: var(--space-3);
+}
+
+.qr-dialog {
+  width: min(360px, 92vw);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  padding: var(--space-3);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.qr-dialog h3 {
+  margin: 0;
+  color: var(--text-h);
+}
+
+.qr-sub {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.qr-image {
+  width: 280px;
+  height: 280px;
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: var(--radius-md);
+  background: #ffffff;
+}
+
+.qr-url {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--code-bg);
+  color: var(--text-h);
+  font-size: 0.8125rem;
+  word-break: break-all;
+}
+
+.qr-error {
+  margin: 0;
+  color: var(--err-fg);
+  font-size: 0.875rem;
+}
+
+.qr-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .err {
   background: var(--err-bg);
   color: var(--err-fg);
@@ -127,14 +191,46 @@
   line-height: 1.4;
 }
 
+.auth-gate {
+  max-width: 560px;
+  width: 100%;
+  margin: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--err-border);
+  border-radius: var(--radius-lg);
+  background: var(--err-bg);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.auth-gate h3 {
+  margin: 0;
+  color: var(--text-h);
+  font-size: 1.05rem;
+}
+
+.auth-gate-hint {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
 .main {
   flex: 1;
   min-height: 0;
   overflow: auto;
   padding: var(--space-3) 0;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   display: flex;
   flex-direction: column;
+}
+
+.main::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .list {
@@ -266,6 +362,11 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
+.composer-attachments {
+  display: grid;
+  gap: var(--space-1);
+}
+
 .composer-field-row {
   width: 100%;
 }
@@ -287,6 +388,37 @@
   border-color: var(--accent);
 }
 
+.composer-field-row.protected {
+  position: relative;
+}
+
+.composer-field-lock-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0.92;
+  animation: pin-lock-breathe 1600ms ease-in-out infinite;
+}
+
+.composer-field-row .field.protected {
+  padding-left: 38px;
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.composer-field-row .field.protected:focus-visible {
+  border-color: var(--accent);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
 .composer-actions {
   display: flex;
   flex-wrap: wrap;
@@ -300,6 +432,57 @@
   min-width: 80px;
   max-width: 160px;
   height: var(--touch-target-min);
+}
+
+.pin-input-wrap {
+  position: relative;
+  flex: 1 1 100px;
+  min-width: 120px;
+  max-width: 220px;
+}
+
+.pin-input-wrap .field.pin {
+  width: 100%;
+  max-width: none;
+  padding-left: 36px;
+}
+
+.pin-lock-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0.92;
+  animation: pin-lock-breathe 1600ms ease-in-out infinite;
+}
+
+@keyframes pin-lock-breathe {
+  0% {
+    opacity: 0.82;
+    transform: translateY(-50%) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-50%) scale(1.08);
+  }
+  100% {
+    opacity: 0.82;
+    transform: translateY(-50%) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pin-lock-icon {
+    animation: none;
+  }
+  .composer-field-lock-icon {
+    animation: none;
+  }
 }
 
 .composer-actions .send {
@@ -483,6 +666,13 @@
 .empty-state svg {
   opacity: 0.5;
   margin-bottom: var(--space-2);
+}
+
+.list-end-anchor {
+  width: 100%;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .sr-only {

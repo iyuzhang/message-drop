@@ -1,14 +1,40 @@
 import type { PoolMessage } from './types'
+import type { ServerEntrypoints } from './types'
 
 export type { AppUpdateInfo } from './types'
 export { checkForAppUpdate } from './release'
 
 export function getApiBase(): string {
   const v = import.meta.env.VITE_API_BASE
-  if (typeof v === 'string' && v.length > 0) return v.replace(/\/$/, '')
   if (typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin
+    const currentOrigin = window.location.origin
+    if (typeof v === 'string' && v.length > 0) {
+      const configured = v.replace(/\/$/, '')
+      try {
+        const configuredUrl = new URL(configured)
+        const currentUrl = new URL(currentOrigin)
+        const configuredHost = configuredUrl.hostname
+        const currentHost = currentUrl.hostname
+        const configuredIsLoopback =
+          configuredHost === '127.0.0.1' ||
+          configuredHost === 'localhost' ||
+          configuredHost === '::1'
+        const currentIsLoopback =
+          currentHost === '127.0.0.1' ||
+          currentHost === 'localhost' ||
+          currentHost === '::1'
+        if (configuredIsLoopback && !currentIsLoopback) {
+          return currentOrigin
+        }
+      } catch {
+        // If VITE_API_BASE is malformed, fall back to current origin.
+        return currentOrigin
+      }
+      return configured
+    }
+    return currentOrigin
   }
+  if (typeof v === 'string' && v.length > 0) return v.replace(/\/$/, '')
   return 'http://127.0.0.1:8787'
 }
 
@@ -98,6 +124,48 @@ export async function setupServerPassword(
   })
   if (!r.ok) {
     await readApiError(r, 'AUTH_SETUP_FAILED')
+  }
+  return (await r.json()) as { token: string; expires_at: number | null }
+}
+
+export async function fetchServerEntrypoints(
+  apiBase: string,
+  token: string | null,
+): Promise<ServerEntrypoints> {
+  const r = await fetch(`${apiBase}/api/entrypoints`, {
+    headers: authHeaders(token),
+  })
+  if (!r.ok) {
+    await readApiError(r, 'ENTRYPOINTS_FETCH_FAILED')
+  }
+  return (await r.json()) as ServerEntrypoints
+}
+
+export async function createQrTicket(
+  apiBase: string,
+): Promise<{ ticket: string; expires_at: number }> {
+  const r = await fetch(`${apiBase}/api/auth/qr-ticket`, {
+    method: 'POST',
+    headers: authHeaders(null, true),
+    body: '{}',
+  })
+  if (!r.ok) {
+    await readApiError(r, 'QR_TICKET_CREATE_FAILED')
+  }
+  return (await r.json()) as { ticket: string; expires_at: number }
+}
+
+export async function consumeQrTicket(
+  apiBase: string,
+  ticket: string,
+): Promise<{ token: string; expires_at: number | null }> {
+  const r = await fetch(`${apiBase}/api/auth/consume-qr-ticket`, {
+    method: 'POST',
+    headers: authHeaders(null, true),
+    body: JSON.stringify({ ticket }),
+  })
+  if (!r.ok) {
+    await readApiError(r, 'QR_TICKET_CONSUME_FAILED')
   }
   return (await r.json()) as { token: string; expires_at: number | null }
 }
