@@ -15,6 +15,16 @@
 
 ## 📦 快速开始 / 安装与使用
 
+## ✅ 推荐传输方式（优先扫码）
+
+日常传文件/文本，推荐使用以下方式：
+
+1. 在电脑端启动 Message Drop（Windows 托盘版或 `message-drop start`）。
+2. 使用服务端展示的二维码（CLI 启动输出或网页右上角 `QR` 按钮）。
+3. 手机扫码一次后即可直接传输。
+
+这是对非技术用户最省步骤、最稳定的默认方式。
+
 ### 1. Windows 安装包（托盘模式）
 
 如果你使用 Windows，这是最推荐的方式，几乎“零配置”。
@@ -25,7 +35,7 @@
 ### 2. 移动端首选：Android App
 
 - **下载地址**：在 [GitHub Releases](https://github.com/iyuzhang/message-drop/releases) 下载最新 APK。
-- **特性**：打开 App 即可通过 mDNS/UDP 自动发现局域网内的 Message Drop 服务并连接。
+- **特性**：打开 App 即可通过 mDNS/UDP 自动发现局域网内的 Message Drop 服务并连接；也可直接扫码服务端二维码一键访问。
 
 ### 3. 全局安装 CLI（npm/pnpm）
 
@@ -90,7 +100,7 @@ pnpm --dir web run build
 | VPN 环境下连接                         | 某些 VPN（尤其 `TUN` 模式）会接管路由或拦截局域网广播/mDNS。可尝试临时关闭 VPN、切换为系统代理模式，或配置局域网分流/直连规则。 |
 
 
-*开发人员可选的真机冒烟测试：*
+*可选的真机冒烟测试：*
 
 ```bash
 pnpm run verify:adb-smoke

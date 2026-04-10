@@ -15,6 +15,16 @@ What we really need on a local network is a shared clipboard that just works. **
 
 ## 📦 Quick Start / Installation
 
+## ✅ Recommended Transfer Flow (QR First)
+
+For daily file/text sharing, the recommended path is:
+
+1. Start Message Drop on your PC (Windows tray app or `message-drop start`).
+2. Use the displayed QR code (CLI output or Web header `QR` button).
+3. Scan once from your phone and start sending immediately.
+
+This is the fastest and most reliable way for non-technical users, with the fewest manual network steps.
+
 ### 1. Windows Installer (Tray Mode)
 
 If you use Windows, this is the recommended path with near-zero setup.
@@ -36,7 +46,7 @@ If you use Windows, this is the recommended path with near-zero setup.
 ### 2. Mobile First: Android App
 
 - **Download**: Get the latest APK from [GitHub Releases](https://github.com/iyuzhang/message-drop/releases).
-- **Features**: Automatically discovers and connects to Message Drop on your LAN via mDNS/UDP.
+- **Features**: Automatically discovers and connects to Message Drop on your LAN via mDNS/UDP. You can also scan the server QR code for one-scan access.
 
 ### 3. Global CLI Install (npm/pnpm)
 
@@ -99,7 +109,7 @@ pnpm --dir web run build
 | Discovery is unstable | Long-press the top status bar in Android app, then manually enter host IP and port. Run `message-drop doctor` on host to view usable IPs. |
 | Connection/discovery breaks under VPN | Some VPN clients (especially `TUN` mode) may hijack routes or block LAN broadcast/mDNS. Try disabling VPN, switching to system-proxy mode, or adding LAN bypass/split-tunnel rules. |
 
-*Optional real-device smoke test for developers:*
+*Optional real-device smoke test:*
 
 ```bash
 pnpm run verify:adb-smoke
