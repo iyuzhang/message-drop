@@ -1,6 +1,9 @@
+import type { IncomingHttpHeaders } from 'node:http'
 import { networkInterfaces } from 'node:os'
 import { Readable } from 'node:stream'
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { Hono } from 'hono'
+import busboy from 'busboy'
 import { cors } from 'hono/cors'
 import { serveStatic } from '@hono/node-server/serve-static'
 import type { AuthManager } from './auth.js'
@@ -15,6 +18,113 @@ export interface MessageAppOptions {
   onMessageCreated?: (msg: PoolMessage) => void
   fileStore?: FileStore
   authManager?: AuthManager
+}
+
+function headersToNodeHeaders(headers: Headers): IncomingHttpHeaders {
+  const out: IncomingHttpHeaders = {}
+  headers.forEach((value, key) => {
+    out[key.toLowerCase()] = value
+  })
+  return out
+}
+
+async function saveUploadedMultipartFile(
+  request: Request,
+  files: FileStore,
+  maxUploadBytes: number,
+): Promise<
+  | { ok: true; meta: Awaited<ReturnType<FileStore['saveStream']>> }
+  | { ok: false; status: 400 | 413 | 500; error: string }
+> {
+  const contentType = request.headers.get('content-type') ?? ''
+  if (!contentType.toLowerCase().includes('multipart/form-data')) {
+    return { ok: false, status: 400, error: 'INVALID_BODY' }
+  }
+  if (request.body === null) {
+    return { ok: false, status: 400, error: 'FILE_REQUIRED' }
+  }
+  const headers = headersToNodeHeaders(request.headers)
+  let parser: ReturnType<typeof busboy>
+  try {
+    parser = busboy({ headers })
+  } catch {
+    return { ok: false, status: 400, error: 'INVALID_BODY' }
+  }
+  return await new Promise((resolve) => {
+    let settled = false
+    let hasFile = false
+    let fileSaveError: Error | null = null
+    let fileSave: Promise<Awaited<ReturnType<FileStore['saveStream']>> | null> = Promise.resolve(null)
+    parser.on('file', (
+      _field: string,
+      file: NodeJS.ReadableStream,
+      info: { filename: string; mimeType: string },
+    ) => {
+      if (hasFile) {
+        file.resume()
+        return
+      }
+      hasFile = true
+      const filename = info.filename || 'upload'
+      const mimeType = info.mimeType || 'application/octet-stream'
+      fileSave = files.saveStream(filename, mimeType, file, maxUploadBytes).catch((error: unknown) => {
+        fileSaveError = error instanceof Error ? error : new Error('UPLOAD_FAILED')
+        return null
+      })
+    })
+    parser.on('error', () => {
+      if (settled) return
+      settled = true
+      void fileSave.catch(() => {})
+      resolve({ ok: false, status: 400, error: 'INVALID_BODY' })
+    })
+    parser.on('finish', async () => {
+      if (settled) return
+      settled = true
+      if (!hasFile) {
+        resolve({ ok: false, status: 400, error: 'FILE_REQUIRED' })
+        return
+      }
+      try {
+        const meta = await fileSave
+        if (meta === null) {
+          if (fileSaveError instanceof Error && fileSaveError.message === 'FILE_TOO_LARGE') {
+            resolve({ ok: false, status: 413, error: 'FILE_TOO_LARGE' })
+            return
+          }
+          if (fileSaveError !== null) {
+            resolve({ ok: false, status: 500, error: 'UPLOAD_FAILED' })
+            return
+          }
+          resolve({ ok: false, status: 400, error: 'FILE_REQUIRED' })
+          return
+        }
+        resolve({ ok: true, meta })
+      } catch (error) {
+        if (error instanceof Error && error.message === 'FILE_TOO_LARGE') {
+          resolve({ ok: false, status: 413, error: 'FILE_TOO_LARGE' })
+          return
+        }
+        resolve({ ok: false, status: 500, error: 'UPLOAD_FAILED' })
+      }
+    })
+    const source = Readable.fromWeb(request.body as unknown as NodeReadableStream)
+    source.on('error', () => {
+      if (settled) return
+      settled = true
+      void fileSave.catch(() => {})
+      resolve({ ok: false, status: 400, error: 'INVALID_BODY' })
+    })
+    source.pipe(parser)
+  })
+}
+
+function resolveMaxUploadBytesFromEnv(): number {
+  const raw = process.env.MESSAGE_DROP_MAX_UPLOAD_BYTES
+  if (raw === undefined || raw.trim() === '') return 0
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0
+  return Math.floor(parsed)
 }
 
 function isPrivateIpv4(address: string): boolean {
@@ -107,6 +217,7 @@ export function createMessageApp(
   const app = new Hono()
   const loginWindowMs = 60_000
   const loginLimit = 10
+  const maxUploadBytes = resolveMaxUploadBytesFromEnv()
   const loginAttempts = new Map<string, { count: number; windowStart: number }>()
 
   app.use(
@@ -383,28 +494,11 @@ export function createMessageApp(
   if (opts.fileStore) {
     const files = opts.fileStore
     app.post('/api/upload', async (c) => {
-      let body: Record<string, unknown>
-      try {
-        body = (await c.req.parseBody()) as Record<string, unknown>
-      } catch {
-        return c.json({ error: 'INVALID_BODY' }, 400)
+      const saved = await saveUploadedMultipartFile(c.req.raw, files, maxUploadBytes)
+      if (!saved.ok) {
+        return c.json({ error: saved.error }, saved.status)
       }
-      const raw = body.file
-      const file =
-        raw instanceof File
-          ? raw
-          : Array.isArray(raw)
-            ? raw.find((x): x is File => x instanceof File)
-            : undefined
-      if (!file) return c.json({ error: 'FILE_REQUIRED' }, 400)
-      const max = 32 * 1024 * 1024
-      const buf = Buffer.from(await file.arrayBuffer())
-      if (buf.length > max) return c.json({ error: 'FILE_TOO_LARGE' }, 413)
-      const meta = await files.save(
-        file.name || 'upload',
-        file.type || 'application/octet-stream',
-        buf,
-      )
+      const meta = saved.meta
       const url = `/api/files/${meta.id}`
       console.log(`[files] stored id=${meta.id} bytes=${meta.size}`)
       return c.json({ file: meta, url })
